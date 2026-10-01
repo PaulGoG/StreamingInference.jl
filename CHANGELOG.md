@@ -15,3 +15,13 @@ follow [Semantic Versioning](https://semver.org/).
   threshold selection, configuration with an explicit pipeline root,
   provenance and SHA-256 product identity, and the CairoMakie extension
   with the theme, exports and figures of this layer.
+
+### Changed (relative to the layer inside MilliHertzQML.jl)
+- The score figures no longer assume a classifier probability: `figure_roc`
+  takes the scorer's name as `label`; `figure_score_distribution`,
+  `figure_telemetry_alerts` and `animate_mission_replay` take
+  `score_label`, `score_name`, `event_label` and `score_range`, and their
+  score axes span the scores and the threshold unless `score_range` is
+  given.
+- `window_score` has a fallback for `AbstractWindowScorer` that throws an
+  `ArgumentError` naming a scorer type without a method.
