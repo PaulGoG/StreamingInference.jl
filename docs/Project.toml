@@ -1,0 +1,9 @@
+[deps]
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+StreamingInference = "16c4c904-5ec2-451a-8da3-97d89c4aed49"
+
+[sources]
+StreamingInference = {path = ".."}
+
+[compat]
+Documenter = "1"

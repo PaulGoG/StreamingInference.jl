@@ -1,0 +1,15 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+*.ji
+Manifest*.toml
+lcov.info
+
+# Generated documentation
+docs/build/
+docs/site/
+
+# OS artifacts
+.DS_Store
+._*

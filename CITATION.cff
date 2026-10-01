@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata below."
+type: software
+title: "StreamingInference.jl"
+abstract: "Windowed analysis of time series delivered in batches, late, out of order and with gaps: window scheduling over the delivered record, conditioning, an estimator interface for stateless and stateful methods, evaluation and alert latencies, implemented in Julia."
+authors:
+  - family-names: "Gogîță"
+    given-names: "Paul-Adrian"
+    email: "gogitapaul@yahoo.ro"
+license: MIT
+repository-code: "https://github.com/PaulGoG/StreamingInference.jl"
+keywords:
+  - time series
+  - streaming
+  - signal processing
+  - Julia

@@ -1,0 +1,63 @@
+# Test matrix, formatting check and coverage. The first leg runs on the
+# current stable release and uploads coverage; the second on the compat
+# floor. The package is not registered, so there is no TagBot: release tags
+# are created by hand, and the Documentation workflow deploys the manual
+# for them.
+name: CI
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+permissions:
+  contents: read
+jobs:
+  test:
+    name: Tests — Julia ${{ matrix.version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - version: "1"
+            os: ubuntu-latest
+            coverage: true
+          - version: "1.13"
+            os: ubuntu-latest
+            coverage: false
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: ${{ matrix.version }}
+      - uses: julia-actions/cache@v3
+      # The suite activates and instantiates test/ itself, with the package
+      # consumed by path; coverage names the repository directory, and the
+      # processing step reports src/ and ext/.
+      - name: Test suite
+        run: julia --color=yes -t auto ${{ matrix.coverage && format('--code-coverage=@{0}', github.workspace) || '' }} test/runtests.jl
+      - uses: julia-actions/julia-processcoverage@v1
+        if: matrix.coverage
+        with:
+          directories: src,ext
+      - uses: codecov/codecov-action@v7
+        if: matrix.coverage
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+  format:
+    name: Formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: julia-actions/setup-julia@v3
+        with:
+          version: "1"
+      - run: |
+          julia --color=yes -e 'using Pkg; Pkg.add("JuliaFormatter"); using JuliaFormatter;
+                    format(".", verbose = false) || error("Formatting check failed: run JuliaFormatter over the repository.")'
