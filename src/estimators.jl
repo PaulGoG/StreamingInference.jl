@@ -60,9 +60,13 @@ estimator_memory(::AbstractWindowEstimator) = Stateless()
     window_score(scorer, window, sample_rate) -> Float32
 
 Score of one conditioned `window` (samples at `sample_rate` [Hz]).
-Implemented by every concrete [`AbstractWindowScorer`](@ref).
+Implemented by every concrete [`AbstractWindowScorer`](@ref); the fallback
+throws an `ArgumentError` naming the scorer type.
 """
 function window_score end
+
+window_score(scorer::AbstractWindowScorer, ::AbstractVector{<:Real}, ::Real) =
+    throw(ArgumentError("$(typeof(scorer)) does not implement window_score."))
 
 """
     score_label(scorer) -> String
