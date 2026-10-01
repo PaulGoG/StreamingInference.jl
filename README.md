@@ -139,7 +139,8 @@ StreamingInference.jl/
 ├── test/
 │   ├── Project.toml            # Test environment (package by path)
 │   ├── activate.jl
-│   └── runtests.jl
+│   ├── runtests.jl             # Static QA, signal processing, evaluation, configuration, figures
+│   └── telemetry_tests.jl      # Streaming replay, reference scorers, ordered release
 └── docs/
     ├── Project.toml            # Documentation environment (package by path)
     ├── activate.jl
