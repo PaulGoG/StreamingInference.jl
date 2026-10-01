@@ -399,6 +399,27 @@ function frame_schedule(n::Integer, n_frames::Integer, hold_frames::Integer)
 end
 
 """
+    score_limits(scores, threshold, score_range) -> (lo, hi)
+
+Limits of a score axis: `score_range` when given, otherwise the range of
+the finite `scores` and the `threshold` widened by 5 % on each side (by
+0.05 when the range is a single value).
+"""
+function score_limits(scores::AbstractVector{<:Real}, threshold::Real, score_range)
+    if score_range !== nothing
+        lo, hi = Float64.(score_range)
+        lo < hi || throw(ArgumentError("score_range = $score_range; expected lo < hi."))
+        return (lo, hi)
+    end
+    values = [Float64(x) for x in scores if isfinite(x)]
+    isfinite(threshold) && push!(values, Float64(threshold))
+    isempty(values) && return (0.0, 1.0)
+    lo, hi = extrema(values)
+    pad = hi > lo ? 0.05 * (hi - lo) : 0.05
+    return (lo - pad, hi + pad)
+end
+
+"""
     top_legend!(figure, axis; nbanks = 1)
 
 Horizontal legend of the labelled series of `axis` above the axes, in the

@@ -784,11 +784,20 @@ end
     @test figure_score_distribution(probs, 0.55) isa CairoMakie.Figure
     # Score axes follow the scorer: by default they span the scores and the
     # threshold widened by 5 %; `score_range` fixes them
-    @test all(isapprox.(ext.score_limits([0.2, 0.6], 0.4, nothing), (0.18, 0.62)))
-    @test all(isapprox.(ext.score_limits([2.0, 3.0, NaN], 5.0, nothing), (1.85, 5.15)))
-    @test all(isapprox.(ext.score_limits([1.0, 1.0], 1.0, nothing), (0.95, 1.05)))
-    @test ext.score_limits([0.5], 0.5, (0, 1)) == (0.0, 1.0)
-    @test_throws ArgumentError ext.score_limits([0.5], 0.5, (1, 0))
+    @test all(
+        isapprox.(StreamingInference.score_limits([0.2, 0.6], 0.4, nothing), (0.18, 0.62)),
+    )
+    @test all(
+        isapprox.(
+            StreamingInference.score_limits([2.0, 3.0, NaN], 5.0, nothing),
+            (1.85, 5.15),
+        ),
+    )
+    @test all(
+        isapprox.(StreamingInference.score_limits([1.0, 1.0], 1.0, nothing), (0.95, 1.05)),
+    )
+    @test StreamingInference.score_limits([0.5], 0.5, (0, 1)) == (0.0, 1.0)
+    @test_throws ArgumentError StreamingInference.score_limits([0.5], 0.5, (1, 0))
     @test figure_score_distribution(
         2 .+ probs,
         2.55;

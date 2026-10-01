@@ -22,7 +22,7 @@ using StreamingInference: contiguous_runs
 using StreamingInference: FIGURE_FONTSIZE, TICK_FONTSIZE, ANNOTATION_FONTSIZE
 using StreamingInference: LEGEND_STYLE, ANIMATION_PX_PER_UNIT, decimation
 using StreamingInference: log_ticks, check_frame_scale, check_gif_path
-using StreamingInference: frame_schedule, scored_at
+using StreamingInference: frame_schedule, scored_at, score_limits
 import StreamingInference:
     figure_theme,
     save_figure,
@@ -421,27 +421,6 @@ function figure_sensitivity(
         xlims!(axis, lo - 0.05 * max(span, 1), hi + 0.05 * max(span, 1))
         figure
     end
-end
-
-"""
-    score_limits(scores, threshold, score_range) -> (lo, hi)
-
-Limits of a score axis: `score_range` when given, otherwise the range of
-the finite `scores` and the `threshold` widened by 5 % on each side (by
-0.05 when the range is a single value).
-"""
-function score_limits(scores::AbstractVector{<:Real}, threshold::Real, score_range)
-    if score_range !== nothing
-        lo, hi = Float64.(score_range)
-        lo < hi || throw(ArgumentError("score_range = $score_range; expected lo < hi."))
-        return (lo, hi)
-    end
-    values = [Float64(x) for x in scores if isfinite(x)]
-    isfinite(threshold) && push!(values, Float64(threshold))
-    isempty(values) && return (0.0, 1.0)
-    lo, hi = extrema(values)
-    pad = hi > lo ? 0.05 * (hi - lo) : 0.05
-    return (lo - pad, hi + pad)
 end
 
 function figure_score_distribution(
