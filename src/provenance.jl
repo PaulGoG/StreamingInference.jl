@@ -86,12 +86,26 @@ function hardware_fingerprint()
 end
 
 """
+    root_package_version(root) -> String
+
+Version declared in the `Project.toml` of the pipeline root `root`, or
+`"unknown"`.
+"""
+function root_package_version(root::AbstractString)
+    project = joinpath(root, "Project.toml")
+    isfile(project) || return "unknown"
+    return string(get(TOML.parsefile(project), "version", "unknown"))
+end
+
+"""
     git_provenance() -> Dict{String, Any}
 
-Git description of the package tree (`DrWatson.gitdescribe`), whether the
-tree is dirty, and the package version; `"unknown"` for the commit and
-`true` for the dirty flag when the tree's state cannot be established
-(outside a git repository, or without git).
+Git description of the pipeline root ([`project_root`](@ref),
+`DrWatson.gitdescribe`), whether the tree is dirty, the version of the
+package at the root (`package_version`, from its `Project.toml`), and the
+version of this package (`streaminference_version`); `"unknown"` for the
+commit and `true` for the dirty flag when the tree's state cannot be
+established (outside a git repository, or without git).
 """
 function git_provenance()
     root = project_root()
@@ -115,7 +129,8 @@ function git_provenance()
     return Dict{String,Any}(
         "git_commit" => commit,
         "git_dirty" => dirty,
-        "package_version" => string(pkgversion(@__MODULE__)),
+        "package_version" => root_package_version(root),
+        "streaminference_version" => string(pkgversion(@__MODULE__)),
     )
 end
 

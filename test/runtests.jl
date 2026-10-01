@@ -648,6 +648,14 @@ end
     g = git_provenance()
     @test haskey(g, "git_commit") &&
           g["package_version"] == string(pkgversion(StreamingInference))
+    @test g["streaminference_version"] == string(pkgversion(StreamingInference))
+    # The package version is that of the pipeline at the root, not of this library
+    mktempdir() do dir
+        write(joinpath(dir, "Project.toml"), "name = \"Pipeline\"\nversion = \"2.5.0\"\n")
+        @test with_pipeline_root(git_provenance, dir)["package_version"] == "2.5.0"
+        rm(joinpath(dir, "Project.toml"))
+        @test with_pipeline_root(git_provenance, dir)["package_version"] == "unknown"
+    end
     mktempdir() do dir
         path = joinpath(dir, "snap.toml")
         write_toml(path, Dict("stage" => Dict("a" => 1)))

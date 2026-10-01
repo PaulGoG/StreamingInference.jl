@@ -23,5 +23,8 @@ follow [Semantic Versioning](https://semver.org/).
   `score_label`, `score_name`, `event_label` and `score_range`, and their
   score axes span the scores and the threshold unless `score_range` is
   given.
+- `git_provenance` records the version of the package at the pipeline root
+  (`package_version`, from its `Project.toml`) and this package's version
+  (`streaminference_version`); inside MilliHertzQML.jl both were one.
 - `window_score` has a fallback for `AbstractWindowScorer` that throws an
   `ArgumentError` naming a scorer type without a method.
