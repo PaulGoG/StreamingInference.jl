@@ -66,7 +66,7 @@ Returns a tuple of `Float32` whose entries are named by
 
 `feature_set = :whitened` (the default) expects a window of the
 **whitened** record ([`whiten_record`](@ref)), whose periodogram has unit
-mean for noise and is therefore independent of window length and strain
+mean for noise and is therefore independent of window length and noise
 amplitude:
 
 1. mean whitened power in `low_band` [Hz];
@@ -87,7 +87,7 @@ whitened set exactly.
 the normalised spectral entropy and ``\\log_{10}`` of the mean, standard
 deviation, and maximum of the periodogram (the paper uses the raw
 moments; the logarithm is a monotone transform that keeps their min–max
-scaling well conditioned over the many decades a TDI spectrum spans).
+scaling well conditioned over the many decades a noise spectrum can span).
 
 Throws an `ArgumentError` when an analysis band holds no frequency bin.
 """

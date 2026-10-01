@@ -33,7 +33,7 @@ end
 """
     matched_filter_snr(h, fs; psd)
 
-Optimal matched-filter signal-to-noise ratio of the strain series `h`
+Optimal matched-filter signal-to-noise ratio of the series `h`
 sampled at `fs` [Hz] against the one-sided noise PSD `psd(f)`:
 
 ```math
@@ -131,9 +131,10 @@ Zero-phase high-pass filtering of the whole record `x` sampled at `fs` [Hz]
 in the frequency domain, with the Butterworth magnitude response
 ``|H(f)| = [1 + (f_c / f)^{2p}]^{-1/2}`` of cutoff `cutoff` ``= f_c`` [Hz]
 and order `order` ``= p`` (``H(0) = 0``). `cutoff = 0` returns a copy of
-`x`. The milliHertz noise rises steeply towards low frequencies
-(acceleration noise ``\\propto f^{-6}`` below 0.4 mHz), so a record must be
-high-passed below the analysis bands before it is cut into windows;
+`x`. Where the noise rises steeply towards low frequencies (red noise,
+such as the acceleration noise ``\\propto f^{-6}`` of a space-borne
+interferometer below 0.4 mHz), a record must be high-passed below the
+analysis bands before it is cut into windows;
 otherwise the sub-window drift leaks into every band through any taper.
 """
 function highpass_record(
@@ -158,26 +159,26 @@ function highpass_record(
 end
 
 """
-    place_signal!(strain, signal, anchor_index, signal_anchor) -> UnitRange{Int}
+    place_signal!(record, signal, anchor_index, signal_anchor) -> UnitRange{Int}
 
-Add `signal` into `strain` so that `signal[signal_anchor]` lands on
-`strain[anchor_index]`, dropping the parts of `signal` that fall outside the
-record. Returns the range of `strain` indices that received the signal
+Add `signal` into `record` so that `signal[signal_anchor]` lands on
+`record[anchor_index]`, dropping the parts of `signal` that fall outside the
+record. Returns the range of `record` indices that received the signal
 (empty when nothing overlaps).
 """
 function place_signal!(
-    strain::AbstractVector{<:Real},
+    record::AbstractVector{<:Real},
     signal::AbstractVector{<:Real},
     anchor_index::Integer,
     signal_anchor::Integer,
 )
     1 <= signal_anchor <= length(signal) || throw(BoundsError(signal, signal_anchor))
-    offset = anchor_index - signal_anchor   # strain index = signal index + offset
+    offset = anchor_index - signal_anchor   # record index = signal index + offset
     first_sig = max(1, 1 - offset)
-    last_sig = min(length(signal), length(strain) - offset)
+    last_sig = min(length(signal), length(record) - offset)
     first_sig <= last_sig || return (anchor_index+1):anchor_index   # empty
     for j in first_sig:last_sig
-        strain[j+offset] += signal[j]
+        record[j+offset] += signal[j]
     end
     return (first_sig+offset):(last_sig+offset)
 end
@@ -272,7 +273,7 @@ bins — the grid interpolates the table instead. `sigma_dex = 0` returns
 the table unchanged.
 
 A Welch estimate carries line-to-line scatter and resolves sharp spectral
-features, the TDI transfer notches among them; the inverse square root of
+features, such as the notches of an instrument transfer function; the inverse square root of
 such a spectrum has a long, ringing impulse response, so whitening by it
 spreads every sample over many window lengths. Smoothing on scales
 narrower than any analysis band removes that fine structure and shortens
