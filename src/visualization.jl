@@ -67,7 +67,7 @@ end
     FIGURE_COLORS
 
 Semantic colours shared by every figure of the project (Okabe–Ito palette),
-each with a single use: `data` (classifier output, time series, measured
+each with a single use: `data` (scores, time series, measured
 points), `label` (labelled spans), `threshold` (the decision threshold,
 black, dashed in every figure), `training` and `validation` (the two
 blocks), `noise` and `signal` (score distributions, and the detected-event
@@ -162,14 +162,18 @@ function save_animation end
 
 """
     animate_mission_replay(windows, threshold, path; epoch, label_spans = nothing,
-                           span_label = "Labelled span", n_frames = 200, framerate = 20, hold_frames = 20,
+                           span_label = "Labelled span", score_label = "Score",
+                           score_name = "Window score", score_range = nothing,
+                           n_frames = 200, framerate = 20, hold_frames = 20,
                            max_points = 6000, size = figure_size(2, 2),
                            px_per_unit = 2) -> String
 
 Four stacked panels of a telemetry replay, two main panels and two strips
 on a canvas of `size` [pt], on a shared mission-time axis
 [days since `epoch`, by default the content end of the first window]:
-window coverage, classifier score with the decision `threshold` as a dashed
+window coverage, the window score (axis `score_label`, legend entry
+`score_name`, limits `score_range` or the range of the scores and the
+threshold widened by 5 %) with the decision `threshold` as a dashed
 rule, the alarmed windows marked, and the spans alerts are credited to
 (`label_spans`, pairs of `DateTime`, named `span_label` in the legend)
 shaded, the count of alarm episodes accumulated along
@@ -191,10 +195,11 @@ to be loaded.
 function animate_mission_replay end
 
 """
-    figure_roc(fpr, tpr, auc) -> Figure
+    figure_roc(fpr, tpr, auc; label = nothing) -> Figure
 
 Receiver operating characteristic with the chance diagonal and the area
-under the curve stated in the legend. Requires CairoMakie.
+under the curve stated in the legend, after the scorer's name `label` when
+given. Requires CairoMakie.
 """
 function figure_roc end
 
@@ -226,25 +231,32 @@ positive window exists. Requires CairoMakie.
 function figure_sensitivity end
 
 """
-    figure_score_distribution(probabilities, threshold; labels = nothing, n_bins = 50) -> Figure
+    figure_score_distribution(probabilities, threshold; labels = nothing, n_bins = 50,
+                              score_label = "Score", score_range = nothing) -> Figure
 
-Histogram of the classifier scores, split into noise and labelled windows
-when `labels` is given, with the decision threshold. Requires CairoMakie.
+Histogram of the window scores, split into noise and labelled windows
+when `labels` is given, with the decision threshold. The bins span
+`score_range`, by default the range of the scores and the threshold
+widened by 5 %; the axis is labelled `score_label`. Requires CairoMakie.
 """
 function figure_score_distribution end
 
 """
     figure_telemetry_alerts(windows, threshold; epoch, label_spans = nothing,
-                            latencies = nothing, span_label = "Labelled span") -> Figure
+                            latencies = nothing, span_label = "Labelled span",
+                            score_label = "Score", score_name = "Window score",
+                            event_label = "Event time", score_range = nothing) -> Figure
 
 Two stacked panels on a shared mission-time axis [days since `epoch`] for
-the windows table of a replay: the classifier score of every window at its
-content end with the decision threshold, alarmed windows marked, and the
-spans alerts are credited to (`label_spans`, pairs of `DateTime`, named
-`span_label` in the legend) shaded; below, the
-ground-availability latency of every window (`complete_at − content_end`
-[h]) with the alert latencies of the detected events (`latencies`, the
-table of `alert_latency_table`) annotated. Requires CairoMakie.
+the windows table of a replay: the score of every window at its content
+end (axis `score_label`, legend entry `score_name`, limits `score_range`
+or the range of the scores and the threshold widened by 5 %) with the
+decision threshold, alarmed windows marked, and the spans alerts are
+credited to (`label_spans`, pairs of `DateTime`, named `span_label` in the
+legend) shaded; below, the ground-availability latency of every window
+(`complete_at − content_end` [h]) with the alert latencies of the detected
+events (`latencies`, the table of `alert_latency_table`, their event times
+named `event_label`) annotated. Requires CairoMakie.
 """
 function figure_telemetry_alerts end
 

@@ -137,7 +137,12 @@ function label_bands!(
     return nothing
 end
 
-function figure_roc(fpr::AbstractVector{<:Real}, tpr::AbstractVector{<:Real}, auc::Real)
+function figure_roc(
+    fpr::AbstractVector{<:Real},
+    tpr::AbstractVector{<:Real},
+    auc::Real;
+    label::Union{Nothing,AbstractString} = nothing,
+)
     length(fpr) == length(tpr) || throw(DimensionMismatch("fpr and tpr differ in length."))
     # Both rates are commensurate, so the axis is square: the canvas keeps
     # the base height and takes only the width the square axis needs.
@@ -163,7 +168,8 @@ function figure_roc(fpr::AbstractVector{<:Real}, tpr::AbstractVector{<:Real}, au
             fpr,
             tpr;
             color = FIGURE_COLORS.data,
-            label = "VQC, AUC $(round(auc; digits = 3))",
+            label = label === nothing ? "AUC $(round(auc; digits = 3))" :
+                    "$label, AUC $(round(auc; digits = 3))",
         )
         xlims!(axis, -0.01, 1.01)
         ylims!(axis, -0.01, 1.01)
@@ -417,21 +423,45 @@ function figure_sensitivity(
     end
 end
 
+"""
+    score_limits(scores, threshold, score_range) -> (lo, hi)
+
+Limits of a score axis: `score_range` when given, otherwise the range of
+the finite `scores` and the `threshold` widened by 5 % on each side (by
+0.05 when the range is a single value).
+"""
+function score_limits(scores::AbstractVector{<:Real}, threshold::Real, score_range)
+    if score_range !== nothing
+        lo, hi = Float64.(score_range)
+        lo < hi || throw(ArgumentError("score_range = $score_range; expected lo < hi."))
+        return (lo, hi)
+    end
+    values = [Float64(x) for x in scores if isfinite(x)]
+    isfinite(threshold) && push!(values, Float64(threshold))
+    isempty(values) && return (0.0, 1.0)
+    lo, hi = extrema(values)
+    pad = hi > lo ? 0.05 * (hi - lo) : 0.05
+    return (lo - pad, hi + pad)
+end
+
 function figure_score_distribution(
     probabilities::AbstractVector{<:Real},
     threshold::Real;
     labels::Union{Nothing,AbstractVector{<:Integer}} = nothing,
     n_bins::Integer = 50,
+    score_label::AbstractString = "Score",
+    score_range = nothing,
 )
     isempty(probabilities) && throw(ArgumentError("no scores to plot."))
     labels === nothing ||
         length(labels) == length(probabilities) ||
         throw(DimensionMismatch("labels and probabilities differ in length."))
     n_bins >= 1 || throw(ArgumentError("n_bins must be positive."))
-    bins = collect(range(0.0, 1.0; length = n_bins + 1))
+    lo, hi = score_limits(probabilities, threshold, score_range)
+    bins = collect(range(lo, hi; length = n_bins + 1))
     return with_theme(figure_theme(; size = figure_size(1))) do
         figure = Figure()
-        axis = Axis(figure[1, 1]; xlabel = "Classifier score", ylabel = "Windows")
+        axis = Axis(figure[1, 1]; xlabel = score_label, ylabel = "Windows")
         if labels === nothing
             hist!(
                 axis,
@@ -470,7 +500,7 @@ function figure_score_distribution(
             linewidth = 1.5,
             label = "Threshold $(round(threshold; digits = 3))",
         )
-        xlims!(axis, 0, 1)
+        xlims!(axis, lo, hi)
         top_legend!(figure, axis; nbanks = 2)
         figure
     end
@@ -545,6 +575,10 @@ function figure_telemetry_alerts(
     label_spans::Union{Nothing,AbstractVector{<:Tuple{DateTime,DateTime}}} = nothing,
     latencies::Union{Nothing,DataFrame} = nothing,
     span_label::AbstractString = "Labelled span",
+    score_label::AbstractString = "Score",
+    score_name::AbstractString = "Window score",
+    event_label::AbstractString = "Event time",
+    score_range = nothing,
 )
     nrow(windows) >= 1 || throw(ArgumentError("the windows table is empty."))
     t_days = [days_since(epoch, t) for t in windows.content_end]
@@ -561,7 +595,7 @@ function figure_telemetry_alerts(
     alarmed = findall(==(1), Int.(windows.decision)[order])
     return with_theme(figure_theme(; size = figure_size(2))) do
         figure = Figure()
-        ax_score = Axis(figure[1, 1]; ylabel = "MBHB probability")
+        ax_score = Axis(figure[1, 1]; ylabel = score_label)
         span_handle = nothing
         if label_spans !== nothing
             for (a, b) in label_spans
@@ -594,7 +628,7 @@ function figure_telemetry_alerts(
             linestyle = :dash,
             linewidth = 1.5,
         )
-        ylims!(ax_score, 0, 1)
+        ylims!(ax_score, score_limits(scores, threshold, score_range)...)
         # The lower panel carries two different latencies against the same
         # mission time: the availability latency of every scored window (the
         # wait for its conditioning stretch and the downlink delay), and, per
@@ -611,13 +645,16 @@ function figure_telemetry_alerts(
             color = (FIGURE_COLORS.fit, 0.35),
             linewidth = 2,
         )
-        merger_handle = hlines!(
-            ax_lat,
-            [0.0];
-            color = FIGURE_COLORS.noise,
-            linestyle = :dot,
-            linewidth = 1.5,
-        )
+        # The event time is the zero of the alert latencies, drawn only with them
+        event_handle =
+            latencies === nothing ? nothing :
+            hlines!(
+                ax_lat,
+                [0.0];
+                color = FIGURE_COLORS.noise,
+                linestyle = :dot,
+                linewidth = 1.5,
+            )
         alert_handle = nothing
         alert_x = Float64[]
         alert_y = Float64[]
@@ -694,12 +731,12 @@ function figure_telemetry_alerts(
         labels = String[]
         for (h, l) in (
             (span_handle, span_label),
-            (score_handle, "Classifier output"),
+            (score_handle, score_name),
             (alarm_handle, "Alarm"),
             (threshold_handle, "Threshold $(round(threshold; digits = 3))"),
             (availability_handle, "Window availability"),
             (alert_handle, "Alert time"),
-            (merger_handle, "Merger"),
+            (event_handle, event_label),
         )
             h === nothing && continue
             push!(handles, h)
@@ -760,6 +797,9 @@ function animate_mission_replay(
     epoch::DateTime = minimum(windows.content_end),
     label_spans::Union{Nothing,AbstractVector{<:Tuple{DateTime,DateTime}}} = nothing,
     span_label::AbstractString = "Labelled span",
+    score_label::AbstractString = "Score",
+    score_name::AbstractString = "Window score",
+    score_range = nothing,
     n_frames::Integer = 200,
     framerate::Integer = 20,
     hold_frames::Integer = 20,
@@ -810,7 +850,7 @@ function animate_mission_replay(
         figure = Figure()
         # Row 1 is the legend; explicit rows keep the panel sizes unambiguous
         ax_cov = Axis(figure[2, 1]; ylabel = "Coverage", yticks = [0.0, 0.5, 1.0])
-        ax_score = Axis(figure[3, 1]; ylabel = "MBHB probability")
+        ax_score = Axis(figure[3, 1]; ylabel = score_label)
         ax_episode =
             Axis(figure[4, 1]; ylabel = "Alarm episodes", yticks = count_ticks(n_episodes))
         ax_lat = Axis(
@@ -826,7 +866,7 @@ function animate_mission_replay(
         end
         xlims!(ax_lat, t_lo - t_pad, t_hi + t_pad)
         ylims!(ax_cov, -0.12, 1.22)
-        ylims!(ax_score, 0, 1)
+        ylims!(ax_score, score_limits(windows.score, threshold, score_range)...)
         ylims!(ax_episode, -0.04 * n_episodes, 1.12 * n_episodes)
         ylims!(ax_lat, lat_lo - lat_pad, lat_hi + lat_pad)
 
@@ -938,7 +978,7 @@ function animate_mission_replay(
         labels = String[]
         for (h, l) in (
             (span_handle, span_label),
-            (score_handle, "Classifier output"),
+            (score_handle, score_name),
             (alarm_handle, "Alarm"),
             (threshold_handle, "Threshold $(round(threshold; digits = 3))"),
             (clock_handle, "Ground clock"),
