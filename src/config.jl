@@ -82,8 +82,8 @@ function config_root(path::AbstractString)
         root = cfgget(paths, "root", "."; type = String)
         resolved = normpath(isabspath(root) ? root : joinpath(dirname(file), root))
         # `normpath` keeps the separator after a trailing `..`
-        return length(resolved) > 1 && endswith(resolved, Base.Filesystem.path_separator) ?
-               resolved[1:(end-1)] : resolved
+        parent, last = splitdir(resolved)
+        return isempty(last) && length(resolved) > 1 ? parent : resolved
     end
     found = ancestor_with_project(dirname(file))
     return found === nothing ? project_root() : found

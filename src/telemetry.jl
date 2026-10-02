@@ -136,7 +136,7 @@ than clamp: it means the batch does not belong to the payload the run was
 started from.
 """
 function time_row(geometry::RunGeometry, t::Dates.DateTime)
-    ms = Dates.value(Dates.Millisecond(t - geometry.start_sim_time))
+    ms = (t - geometry.start_sim_time) / Dates.Millisecond(1)
     return round(Int, ms * geometry.sample_rate / 1000) + 1
 end
 
@@ -1317,7 +1317,7 @@ The arrival time at which every window of a replay table was scored: its
 windows wait for their predecessors), its `complete_at` otherwise.
 """
 scored_at(windows::DataFrame) =
-    "release_at" in DataFrames.names(windows) ? windows.release_at : windows.complete_at
+    "release_at" in names(windows) ? windows.release_at : windows.complete_at
 
 """
     gaps_table(state) -> DataFrame
@@ -1602,7 +1602,7 @@ function alert_latency_table(
                 ),
             )
         else
-            latency_h = Dates.value(best_t - t_merger) / 3.6e6
+            latency_h = (best_t - t_merger) / Dates.Millisecond(1) / 3.6e6
             push!(
                 out,
                 (

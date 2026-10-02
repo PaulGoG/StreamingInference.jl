@@ -545,7 +545,7 @@ end
 
 Mission time `t` in days after `epoch`.
 """
-days_since(epoch::DateTime, t::DateTime) = Dates.value(t - epoch) / 8.64e7
+days_since(epoch::DateTime, t::DateTime) = (t - epoch) / Dates.Millisecond(1) / 8.64e7
 
 function figure_telemetry_alerts(
     windows::DataFrame,
@@ -563,7 +563,7 @@ function figure_telemetry_alerts(
     t_days = [days_since(epoch, t) for t in windows.content_end]
     scores = Float64.(windows.score)
     latency_h = [
-        Dates.value(a - c) / 3.6e6 for
+        (a - c) / Dates.Millisecond(1) / 3.6e6 for
         (a, c) in zip(scored_at(windows), windows.content_end)
     ]
     # Windows complete out of order: draw them in content-time order
@@ -642,8 +642,10 @@ function figure_telemetry_alerts(
             alert_x = [days_since(epoch, t) for t in hits.t_alarm]
             # Data latency t_alarm − t_merger, the quantity of the benchmark
             # tables; the processing budget is not added
-            alert_y =
-                [Dates.value(a - m) / 3.6e6 for (a, m) in zip(hits.t_alarm, hits.t_merger)]
+            alert_y = [
+                (a - m) / Dates.Millisecond(1) / 3.6e6 for
+                (a, m) in zip(hits.t_alarm, hits.t_merger)
+            ]
             isempty(alert_x) || (
                 alert_handle = scatter!(
                     ax_lat,
