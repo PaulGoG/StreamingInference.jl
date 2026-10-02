@@ -267,6 +267,73 @@ arrival_events(run::MemoryTelemetryRun) = run.events
 
 run_state(::MemoryTelemetryRun) = :complete
 
+"""
+    ScheduledRecordRun(schedule, record; check = true)
+
+The delivery of one run applied to the content of a local record: batches,
+arrival events, geometry and state are those of `schedule`
+(an [`AbstractTelemetryRun`](@ref)), and every delivered batch is served
+from the rows it holds of `record`, a vector or a matrix with one column
+per channel. A producer that carries one payload column thus supplies the
+arrival process of a multichannel replay: the delivery of a batch is taken
+to be common to the synchronous channels of its rows.
+
+With `check`, every batch served is compared with the batch the schedule
+itself delivers: the first column of `record` must hold those samples,
+value for value in single precision, or the record is not the content the
+run carried and the batch is refused. Rows beyond the record are zeros, as
+the producer pads its payload.
+"""
+struct ScheduledRecordRun{R<:AbstractTelemetryRun} <: AbstractTelemetryRun
+    schedule::R
+    record::Union{Vector{Float32},Matrix{Float32}}
+    rows::Dict{String,UnitRange{Int}}
+    check::Bool
+    function ScheduledRecordRun(
+        schedule::R,
+        record::AbstractVecOrMat{<:Real};
+        check::Bool = true,
+    ) where {R<:AbstractTelemetryRun}
+        size(record, 1) >= 1 || throw(ArgumentError("the record is empty."))
+        rows = Dict(b.name => UnitRange{Int}(b.rows) for b in list_batches(schedule))
+        return new{R}(schedule, Array{Float32}(record), rows, check)
+    end
+end
+
+run_geometry(run::ScheduledRecordRun) = run_geometry(run.schedule)
+list_batches(run::ScheduledRecordRun) = list_batches(run.schedule)
+arrival_events(run::ScheduledRecordRun) = arrival_events(run.schedule)
+run_state(run::ScheduledRecordRun) = run_state(run.schedule)
+
+function read_batch(run::ScheduledRecordRun, name::AbstractString)
+    haskey(run.rows, name) ||
+        throw(ArgumentError("batch $name is not a batch of the scheduling run."))
+    rows = run.rows[name]
+    n = size(run.record, 1)
+    held = first(rows):min(last(rows), n)
+    data =
+        run.record isa AbstractVector ? zeros(Float32, length(rows)) :
+        zeros(Float32, length(rows), size(run.record, 2))
+    if !isempty(held)
+        if run.record isa AbstractVector
+            data[1:length(held)] = view(run.record, held)
+        else
+            data[1:length(held), :] = view(run.record, held, :)
+        end
+    end
+    if run.check
+        delivered = read_batch(run.schedule, name)
+        first_channel = data isa AbstractVector ? data : view(data, :, 1)
+        (length(delivered) == length(rows) && delivered == first_channel) || throw(
+            ArgumentError(
+                "batch $name of the scheduling run does not hold rows $rows of the " *
+                "record: the record is not the content the run carried.",
+            ),
+        )
+    end
+    return data
+end
+
 # --- Coverage ----------------------------------------------------------
 
 """

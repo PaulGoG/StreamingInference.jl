@@ -47,7 +47,8 @@ export figure_score_distribution, figure_telemetry_alerts, animation_theme, save
 export animate_mission_replay, RunGeometry, BatchRecord, ArrivalEvent, WindowRecord
 export parse_batch_name, batch_rows, row_time, time_row, event_symbol
 export AbstractTelemetryRun, run_geometry, list_batches, read_batch, arrival_events
-export run_state, MemoryTelemetryRun, Coverage, add!, remove!, covered_fraction, holes
+export run_state, MemoryTelemetryRun, ScheduledRecordRun, Coverage, add!, remove!
+export covered_fraction, holes
 export covered_stretch, WindowScheduler, window_rows, conditioning_rows, windows_touching
 export newly_evaluable!, StreamingDetector, score_window, TrailingWelch
 export AbstractWindowEstimator, AbstractWindowScorer, EstimatorMemory, Stateless, Stateful

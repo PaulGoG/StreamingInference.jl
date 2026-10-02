@@ -787,4 +787,29 @@ end
               extract_features(window, fs; combination = combination)
     end
     @test_throws ArgumentError FeatureMap(; combination = :sum)
+
+    # The delivery of a single-channel run applied to the two-channel record
+    schedule = single(1)
+    scheduled = ScheduledRecordRun(schedule, payload)
+    @test run_geometry(scheduled) == run_geometry(schedule)
+    @test read_batch(scheduled, "LIVE_batch_3") == read_batch(run2, "LIVE_batch_3")
+    @test replay_run(scheduled, detector(ColumnRMS(2), psds)).score ==
+          replay_run(run2, detector(ColumnRMS(2), psds)).score
+    @test read_batch(ScheduledRecordRun(schedule, payload[:, 1]), "LIVE_batch_3") ==
+          read_batch(schedule, "LIVE_batch_3")
+    # A record that is not the content the run carried is refused, unless
+    # the check is waived
+    other = reverse(payload; dims = 1)
+    @test_throws ArgumentError read_batch(
+        ScheduledRecordRun(schedule, other),
+        "LIVE_batch_3",
+    )
+    @test read_batch(ScheduledRecordRun(schedule, other; check = false), "LIVE_batch_3") ==
+          Float32.(other[batch_rows(3, P), :])
+    # Rows beyond the record are zeros, as the producer pads its payload
+    short = ScheduledRecordRun(schedule, payload[1:(2P+100), :]; check = false)
+    padded = read_batch(short, "LIVE_batch_3")
+    @test padded[1:100, :] == Float32.(payload[(2P+1):(2P+100), :])
+    @test all(iszero, padded[101:end, :])
+    @test_throws ArgumentError read_batch(scheduled, "LIVE_batch_999")
 end

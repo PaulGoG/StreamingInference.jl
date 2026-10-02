@@ -36,6 +36,9 @@ follow [Semantic Versioning](https://semver.org/).
   a `TrailingWelch` replay keeps one causal estimate per channel, and the
   scorer receives the window as a matrix. `FeatureMap` carries the
   `combination` of the channels. A single-channel replay is unchanged.
+  `ScheduledRecordRun` applies the delivery of one run to the content of a
+  local record of several channels, after checking that the record is the
+  content the run carried.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`
