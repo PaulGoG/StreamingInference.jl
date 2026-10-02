@@ -19,6 +19,12 @@ follow [Semantic Versioning](https://semver.org/).
   every package of the resolved environment that depends on it — with the
   version and the tree hash, revision or path each is tracked by;
   `provenance` records it under `layers`.
+- Windows of several synchronous channels: `extract_features` and
+  `window_features` take a matrix with one channel per column and return
+  the features of the channel-averaged tapered periodogram
+  (`network_periodogram`), so the feature dimension does not depend on the
+  number of channels; one channel as a matrix gives the features of the
+  vector bit for bit.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`

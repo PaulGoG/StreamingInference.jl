@@ -206,6 +206,91 @@ end
     @test_throws ArgumentError extract_features(record[1:1000], fs; feature_set = :other)
 end
 
+@testset "Multichannel features" begin
+    rng = StableRNG(12)
+    fs = 0.2
+    channels = hcat(
+        (
+            whiten_record(
+                highpass_record(
+                    synthesize_noise(rng, 20000, fs; psd = noise_psd),
+                    fs;
+                    cutoff = 5e-4,
+                ),
+                fs;
+                psd = noise_psd,
+            ) for _ in 1:3
+        )...,
+    )
+    window = channels[5001:6000, :]
+    # The periodogram of several channels is the average of theirs
+    spectra = [tapered_periodogram(window[:, c]) for c in 1:3]
+    @test network_periodogram(window) ≈ (spectra[1] .+ spectra[2] .+ spectra[3]) ./ 3
+    @test network_periodogram(window[:, 1]) == spectra[1]
+    @test network_periodogram(window[:, 1:1]) == spectra[1]
+    @test network_periodogram(hcat(window[:, 1], window[:, 1])) == spectra[1]
+    @test_throws ArgumentError network_periodogram(zeros(1000, 0))
+    # Features: one channel as a matrix or a vector alike; the count does not
+    # grow with the channels; band powers are the channel means
+    edges = [1e-3, 2e-3, 5e-3, 1e-1]
+    single = extract_features(window[:, 1], fs; feature_set = :bands, band_edges = edges)
+    @test extract_features(window[:, 1:1], fs; feature_set = :bands, band_edges = edges) ==
+          single
+    network = extract_features(window, fs; feature_set = :bands, band_edges = edges)
+    @test length(network) == length(single) == 5
+    per_channel = [
+        extract_features(window[:, c], fs; feature_set = :bands, band_edges = edges) for
+        c in 1:3
+    ]
+    for band in 1:3
+        @test network[band] ≈ sum(f[band] for f in per_channel) / 3 rtol = 1e-6
+    end
+    # Under noise the averaged periodogram keeps its unit mean and its
+    # spread falls as 1/√C: log₁₀ of the standard deviation goes from 0
+    # towards -log₁₀(√3)
+    long_single = extract_features(channels[:, 1], fs)
+    long_network = extract_features(channels, fs)
+    @test isapprox(long_network[1], 1.0; atol = 0.1)
+    @test isapprox(long_network[4] - long_single[4], -log10(sqrt(3)); atol = 0.05)
+    # A signal common to the channels keeps its band power; the noise does not add to it
+    t = (0:19999) ./ fs
+    tone = cos.(2π * 2e-3 .* t)
+    @test isapprox(
+        extract_features(channels .+ tone, fs)[1],
+        extract_features(channels[:, 1] .+ tone, fs)[1];
+        rtol = 0.05,
+    )
+    # Sliding windows of a multichannel record
+    table = window_features(
+        channels,
+        fs;
+        window_size = 1000,
+        step_size = 500,
+        low_band = (1e-3, 5e-3),
+        high_band = (5e-3, 1e-1),
+        feature_set = :whitened,
+    )
+    @test size(table) == (39, 4)
+    @test Tuple(table[11, :]) == extract_features(channels[5001:6000, :], fs)
+    @test window_features(
+        channels[:, 1],
+        fs;
+        window_size = 1000,
+        step_size = 500,
+        low_band = (1e-3, 5e-3),
+        high_band = (5e-3, 1e-1),
+        feature_set = :whitened,
+    ) == window_features(
+        channels[:, 1:1],
+        fs;
+        window_size = 1000,
+        step_size = 500,
+        low_band = (1e-3, 5e-3),
+        high_band = (5e-3, 1e-1),
+        feature_set = :whitened,
+    )
+end
+
 @testset "Record high-pass" begin
     fs = 0.2
     n = 20000

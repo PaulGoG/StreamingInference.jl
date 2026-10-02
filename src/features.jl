@@ -64,6 +64,11 @@ from its tapered periodogram ``P_k`` ([`tapered_periodogram`](@ref)).
 Returns a tuple of `Float32` whose entries are named by
 [`feature_names`](@ref).
 
+A matrix `x` holds a window of several synchronous channels, one per
+column; the features are then those of the channel-averaged periodogram
+([`network_periodogram`](@ref)), so their number does not depend on the
+number of channels.
+
 `feature_set = :whitened` (the default) expects a window of the
 **whitened** record ([`whiten_record`](@ref)), whose periodogram has unit
 mean for noise and is therefore independent of window length and noise
@@ -92,7 +97,7 @@ scaling well conditioned over the many decades a noise spectrum can span).
 Throws an `ArgumentError` when an analysis band holds no frequency bin.
 """
 function extract_features(
-    x::AbstractVector{<:Real},
+    x::AbstractVecOrMat{<:Real},
     sample_rate::Real = 0.2;
     low_band::Tuple{Real,Real} = (1e-3, 5e-3),
     high_band::Tuple{Real,Real} = (5e-3, 1e-1),
@@ -104,8 +109,8 @@ function extract_features(
     feature_set in FEATURE_SETS ||
         throw(ArgumentError("feature_set = $feature_set; expected one of $(FEATURE_SETS)."))
     edges = feature_set == :bands ? check_band_edges(band_edges) : Float64[]
-    power = tapered_periodogram(x; taper = taper)
-    n_samples = length(x)
+    power = network_periodogram(x; taper = taper)
+    n_samples = size(x, 1)
 
     total = sum(power)
     n_bins = length(power) - 1   # the DC bin carries no power
@@ -158,6 +163,31 @@ function extract_features(
     p_low = mean(@view power[mask_low])
     p_high = mean(@view power[mask_high])
     return Float32(p_low), Float32(p_high), Float32(entropy), Float32(log_power_std)
+end
+
+"""
+    network_periodogram(x; taper = :hann) -> Vector{Float64}
+
+Tapered periodogram of a window ([`tapered_periodogram`](@ref)); for a
+matrix `x` of ``C`` synchronous channels, one per column, the average over
+the channels, ``\\bar P_k = \\frac{1}{C} \\sum_c P_k^{(c)}``. On channels
+whitened one by one, with independent noise, every ``P_k^{(c)}`` has unit
+mean under noise and ``\\bar P_k`` keeps it while its variance falls as
+``1/C``; the power of a signal adds over the channels, as the squared
+signal-to-noise ratios of a network do.
+"""
+network_periodogram(x::AbstractVector{<:Real}; taper::Symbol = :hann) =
+    tapered_periodogram(x; taper = taper)
+
+function network_periodogram(x::AbstractMatrix{<:Real}; taper::Symbol = :hann)
+    n_channels = size(x, 2)
+    n_channels >= 1 || throw(ArgumentError("the window holds no channel."))
+    power = tapered_periodogram(@view(x[:, 1]); taper = taper)
+    for c in 2:n_channels
+        power .+= tapered_periodogram(@view(x[:, c]); taper = taper)
+    end
+    n_channels > 1 && (power ./= n_channels)
+    return power
 end
 
 """

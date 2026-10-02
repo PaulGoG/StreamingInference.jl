@@ -39,10 +39,12 @@ Feature matrix of the sliding windows of the (whitened) record `A` sampled
 at `fs` [Hz]: one row per window of `window_size` samples advancing by
 `step_size`, the columns named by [`feature_names`](@ref) and computed by
 [`extract_features`](@ref) with the analysis bands `low_band`,
-`high_band` [Hz] (`:whitened`) or the `band_edges` [Hz] (`:bands`).
+`high_band` [Hz] (`:whitened`) or the `band_edges` [Hz] (`:bands`). A
+matrix `A` holds several synchronous channels, one per column, each
+whitened by its own PSD.
 """
 function window_features(
-    A::AbstractVector{<:Real},
+    A::AbstractVecOrMat{<:Real},
     fs::Real;
     window_size::Integer,
     step_size::Integer,
@@ -51,13 +53,13 @@ function window_features(
     band_edges::AbstractVector{<:Real} = [1e-3, 5e-3, 1e-1],
     feature_set::Symbol,
 )
-    n_windows = window_count(length(A), window_size, step_size)
+    n_windows = window_count(size(A, 1), window_size, step_size)
     names = feature_names(feature_set; n_bands = length(band_edges) - 1)
     features = Matrix{Float32}(undef, n_windows, length(names))
     decile = max(1, div(n_windows, 10))
     for i in 1:n_windows
         lo = (i - 1) * step_size + 1
-        window = @view A[lo:(lo+window_size-1)]
+        window = selectdim(A, 1, lo:(lo+window_size-1))
         features[i, :] .= extract_features(
             window,
             fs;
