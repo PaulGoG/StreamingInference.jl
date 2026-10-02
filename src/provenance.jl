@@ -109,11 +109,94 @@ established (outside a git repository, or without git).
 """
 function git_provenance()
     root = project_root()
+    commit, dirty = git_state(root)
+    return Dict{String,Any}(
+        "git_commit" => commit,
+        "git_dirty" => dirty,
+        "package_version" => root_package_version(root),
+        "streaminference_version" => string(pkgversion(@__MODULE__)),
+    )
+end
+
+"""
+    layer_provenance(manifest = active_manifest_path()) -> Vector{Dict{String, Any}}
+
+The packages of the resolved environment that make up the pipeline: this
+package and every package whose dependencies reach it, as the Manifest at
+`manifest` records them. Each entry holds the `name` and `version` and,
+according to how the package is tracked, its `tree_hash` (registered or
+tracked by URL), `url` and `revision` (tracked by URL), or its `path` with
+the `git_commit` and `git_dirty` state of that directory (tracked by path).
+This package comes first, the others follow by name. Empty without a
+Manifest on disk.
+
+The git description of the pipeline root ([`git_provenance`](@ref)) covers
+one repository; a pipeline assembled from several packages is attributed to
+code only by the revision of each.
+"""
+function layer_provenance(manifest::Union{Nothing,AbstractString} = active_manifest_path())
+    (manifest === nothing || !isfile(manifest)) && return Dict{String,Any}[]
+    entries = get(TOML.parsefile(manifest), "deps", Dict{String,Any}())
+    core = string(nameof(@__MODULE__))
+    haskey(entries, core) || return Dict{String,Any}[]
+    # `deps` is a list of names, or a table of names to UUIDs where a name is ambiguous
+    dependencies(name) =
+        let deps = get(first(entries[name]), "deps", String[])
+            deps isa AbstractDict ? collect(keys(deps)) : deps
+        end
+    dependents = Set([core])
+    grown = true
+    while grown
+        grown = false
+        for name in keys(entries)
+            name in dependents && continue
+            if any(in(dependents), dependencies(name))
+                push!(dependents, name)
+                grown = true
+            end
+        end
+    end
+    names = vcat(core, sort!(collect(setdiff(dependents, [core]))))
+    return [layer_record(name, first(entries[name]), dirname(manifest)) for name in names]
+end
+
+function layer_record(
+    name::AbstractString,
+    entry::AbstractDict,
+    manifest_dir::AbstractString,
+)
+    record = Dict{String,Any}(
+        "name" => String(name),
+        "version" => string(get(entry, "version", "unknown")),
+    )
+    haskey(entry, "git-tree-sha1") && (record["tree_hash"] = entry["git-tree-sha1"])
+    haskey(entry, "repo-url") && (record["url"] = entry["repo-url"])
+    haskey(entry, "repo-rev") && (record["revision"] = entry["repo-rev"])
+    if haskey(entry, "path")
+        path = normpath(joinpath(manifest_dir, entry["path"]))
+        # `normpath` keeps the separator after a trailing `..`
+        isempty(basename(path)) && length(path) > 1 && (path = dirname(path))
+        record["path"] = provenance_path(path)
+        commit, dirty = git_state(path)
+        record["git_commit"] = commit
+        record["git_dirty"] = dirty
+    end
+    return record
+end
+
+"""
+    git_state(dir) -> (commit, dirty)
+
+`DrWatson.gitdescribe` of the repository holding `dir` and whether its tree
+is dirty; `"unknown"` and `true` when the state cannot be established
+(outside a git repository, or without git).
+"""
+function git_state(dir::AbstractString)
     # DrWatson warns on a dirty tree at every call; the flag is recorded
-    # explicitly below instead.
+    # explicitly instead.
     commit = try
         with_logger(NullLogger()) do
-            something(DrWatson.gitdescribe(root), "unknown")
+            something(DrWatson.gitdescribe(dir), "unknown")
         end
     catch e
         e isa InterruptException && rethrow()
@@ -121,17 +204,12 @@ function git_provenance()
     end
     # A tree whose state cannot be established is not recorded as clean.
     dirty = commit == "unknown" ? true : try
-        DrWatson.isdirty(root)
+        DrWatson.isdirty(dir)
     catch e
         e isa InterruptException && rethrow()
         true
     end
-    return Dict{String,Any}(
-        "git_commit" => commit,
-        "git_dirty" => dirty,
-        "package_version" => root_package_version(root),
-        "streaminference_version" => string(pkgversion(@__MODULE__)),
-    )
+    return commit, dirty
 end
 
 """
@@ -200,14 +278,17 @@ end
 """
     provenance() -> Dict{String, Any}
 
-`hardware`, `git`, and `environment` sections of a provenance snapshot, plus
-the wall-clock time of writing. `environment` names the active project and
-the digest of its Manifest ([`manifest_sha256`](@ref)).
+`hardware`, `git`, `layers`, and `environment` sections of a provenance
+snapshot, plus the wall-clock time of writing. `layers` lists the packages
+of the pipeline with their revisions ([`layer_provenance`](@ref));
+`environment` names the active project and the digest of its Manifest
+([`manifest_sha256`](@ref)).
 """
 function provenance()
     return Dict{String,Any}(
         "hardware" => hardware_fingerprint(),
         "git" => git_provenance(),
+        "layers" => layer_provenance(),
         "environment" => Dict{String,Any}(
             "active_project" =>
                 provenance_path(something(Base.active_project(), "unknown")),

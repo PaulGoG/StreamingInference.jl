@@ -36,7 +36,8 @@ export smooth_psd, interpolated_psd, fixed_spans, span_labels, project_root, res
 export rootrelative, provenance_path, load_config, cfgget, override, section
 export analysis_band, pipeline_paths, feature_geometry, inference_settings
 export resource_settings, TIMER, report_timing, new_run_id, hardware_fingerprint
-export git_provenance, provenance, active_manifest_path, manifest_sha256
+export git_provenance, layer_provenance, provenance, active_manifest_path
+export manifest_sha256
 export snapshot_manifest, backup_existing!, write_toml, write_csv
 export record_memory_estimate_gib, check_memory, window_features, window_labels
 export FIGURE_SIZE, PANEL_HEIGHT, STRIP_HEIGHT, figure_size, FIGURE_COLORS, FIGURE_STROKES

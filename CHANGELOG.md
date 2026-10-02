@@ -15,6 +15,10 @@ follow [Semantic Versioning](https://semver.org/).
   threshold selection, configuration with an explicit pipeline root,
   provenance and SHA-256 product identity, and the CairoMakie extension
   with the theme, exports and figures of this layer.
+- `layer_provenance` lists the packages of the pipeline — this one and
+  every package of the resolved environment that depends on it — with the
+  version and the tree hash, revision or path each is tracked by;
+  `provenance` records it under `layers`.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`

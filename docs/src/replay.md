@@ -84,8 +84,9 @@ Relative paths of a configuration resolve against the pipeline root
 environment variable `STREAMINGINFERENCE_ROOT`, or the nearest directory
 above the active environment whose `Project.toml` declares a package.
 [`config_root`](@ref) derives the root from the location of a configuration
-file. Run provenance records the git state of that root, the hardware and
-the resolved environment ([`provenance`](@ref)); data products are
+file. Run provenance records the git state of that root, the packages of
+the pipeline with their revisions ([`layer_provenance`](@ref)), the hardware
+and the resolved environment ([`provenance`](@ref)); data products are
 identified by SHA-256 digests of their parameters and inputs
 ([`parameter_digest`](@ref), [`content_digest`](@ref),
 [`product_table`](@ref)).

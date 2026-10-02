@@ -21,7 +21,7 @@ estimate or a forecast plug into the same chain.
 | Signal processing | `synthesize_noise`, `tapered_periodogram`, `welch_psd`, `smooth_psd`, `interpolated_psd`, `highpass_record`, `whiten_record`, `matched_filter_snr`, `scale_to_snr`, `place_signal!` |
 | Features and labels | `extract_features`, `window_features`, `window_labels`, `fixed_spans`, `span_labels`, `chronological_split` |
 | Evaluation | `roc_curve`, `roc_auc`, `contiguous_runs`, `event_metrics`, `threshold_sweep`, `select_threshold` |
-| Configuration and provenance | `load_config`, `cfgget`, `section`, `with_pipeline_root`, `config_root`, `project_root`, `resolvepath`, `provenance`, `git_provenance`, `hardware_fingerprint`, `parameter_digest`, `content_digest`, `product_table` |
+| Configuration and provenance | `load_config`, `cfgget`, `section`, `with_pipeline_root`, `config_root`, `project_root`, `resolvepath`, `provenance`, `git_provenance`, `layer_provenance`, `hardware_fingerprint`, `parameter_digest`, `content_digest`, `product_table` |
 | Figures (CairoMakie extension) | `figure_theme`, `save_figure`, `figure_roc`, `figure_threshold_sweep`, `figure_sensitivity`, `figure_score_distribution`, `figure_telemetry_alerts`, `animate_mission_replay` |
 
 ## Example

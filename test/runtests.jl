@@ -693,9 +693,76 @@ end
     digest = manifest_sha256()
     @test occursin(r"^[0-9a-f]{64}$", digest)
     env = provenance()["environment"]
-    @test Set(keys(provenance())) == Set(["hardware", "git", "environment", "written_at"])
+    @test Set(keys(provenance())) ==
+          Set(["hardware", "git", "layers", "environment", "written_at"])
     @test env["manifest_sha256"] == digest
     @test !isabspath(env["active_project"])
+    # Packages of the pipeline: this one first, tracked by path in the test
+    # environment, so with the git state of its directory
+    layers = layer_provenance()
+    @test first(layers)["name"] == "StreamingInference"
+    @test first(layers)["version"] == string(pkgversion(StreamingInference))
+    @test first(layers)["git_commit"] == g["git_commit"]
+    @test !isabspath(first(layers)["path"])
+    @test [l["name"] for l in provenance()["layers"]] == [l["name"] for l in layers]
+    mktempdir() do dir
+        synthetic = joinpath(dir, "Manifest.toml")
+        write(
+            synthetic,
+            """
+            julia_version = "1.13.1"
+            manifest_format = "2.0"
+
+            [[deps.Domain]]
+            deps = ["StreamingInference"]
+            git-tree-sha1 = "bbbb"
+            uuid = "00000000-0000-0000-0000-000000000001"
+            version = "1.2.3"
+
+            [[deps.Method]]
+            path = "sub/../method"
+            uuid = "00000000-0000-0000-0000-000000000002"
+            version = "0.3.0"
+
+                [deps.Method.deps]
+                Domain = "00000000-0000-0000-0000-000000000001"
+
+            [[deps.StreamingInference]]
+            deps = ["TOML"]
+            git-tree-sha1 = "aaaa"
+            repo-rev = "1111"
+            repo-url = "https://example.org/StreamingInference.jl.git"
+            uuid = "16c4c904-5ec2-451a-8da3-97d89c4aed49"
+            version = "0.1.0"
+
+            [[deps.TOML]]
+            uuid = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
+            version = "1.0.3"
+
+            [[deps.Unrelated]]
+            deps = ["TOML"]
+            uuid = "00000000-0000-0000-0000-000000000003"
+            version = "9.9.9"
+            """,
+        )
+        records = layer_provenance(synthetic)
+        @test [r["name"] for r in records] == ["StreamingInference", "Domain", "Method"]
+        @test records[1] == Dict(
+            "name" => "StreamingInference",
+            "version" => "0.1.0",
+            "tree_hash" => "aaaa",
+            "revision" => "1111",
+            "url" => "https://example.org/StreamingInference.jl.git",
+        )
+        @test records[2] ==
+              Dict("name" => "Domain", "version" => "1.2.3", "tree_hash" => "bbbb")
+        # A path outside any repository has no established git state
+        @test records[3]["path"] == "method"
+        @test records[3]["git_commit"] == "unknown" && records[3]["git_dirty"]
+        @test isempty(layer_provenance(joinpath(dir, "absent.toml")))
+        write(synthetic, "[[deps.TOML]]\nversion = \"1.0.3\"\n")
+        @test isempty(layer_provenance(synthetic))
+    end
     mktempdir() do dir
         target = snapshot_manifest(joinpath(dir, "run"))
         @test target == joinpath(dir, "run", "manifest_snapshot.toml")
