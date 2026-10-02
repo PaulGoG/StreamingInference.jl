@@ -32,7 +32,7 @@ export load_data, load_features, extract_features, feature_names, chronological_
 export roc_curve, roc_auc, contiguous_runs, event_metrics, select_threshold
 export threshold_sweep, threshold_rows, synthesize_noise, matched_filter_snr, scale_to_snr
 export highpass_record, whiten_record, tapered_periodogram, place_signal!, welch_psd
-export network_periodogram
+export network_periodogram, CHANNEL_COMBINATIONS
 export smooth_psd, interpolated_psd, fixed_spans, span_labels, project_root, resolvepath
 export rootrelative, provenance_path, load_config, cfgget, override, section
 export analysis_band, pipeline_paths, feature_geometry, inference_settings

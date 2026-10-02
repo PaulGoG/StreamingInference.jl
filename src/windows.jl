@@ -33,7 +33,8 @@ end
 
 """
     window_features(A, fs; window_size, step_size, low_band, high_band,
-                    band_edges = [1e-3, 5e-3, 1e-1], feature_set) -> Matrix{Float32}
+                    band_edges = [1e-3, 5e-3, 1e-1], feature_set,
+                    combination = :mean) -> Matrix{Float32}
 
 Feature matrix of the sliding windows of the (whitened) record `A` sampled
 at `fs` [Hz]: one row per window of `window_size` samples advancing by
@@ -41,7 +42,8 @@ at `fs` [Hz]: one row per window of `window_size` samples advancing by
 [`extract_features`](@ref) with the analysis bands `low_band`,
 `high_band` [Hz] (`:whitened`) or the `band_edges` [Hz] (`:bands`). A
 matrix `A` holds several synchronous channels, one per column, each
-whitened by its own PSD.
+whitened by its own PSD, combined as `combination` says
+([`CHANNEL_COMBINATIONS`](@ref)).
 """
 function window_features(
     A::AbstractVecOrMat{<:Real},
@@ -52,6 +54,7 @@ function window_features(
     high_band::Tuple{Real,Real},
     band_edges::AbstractVector{<:Real} = [1e-3, 5e-3, 1e-1],
     feature_set::Symbol,
+    combination::Symbol = :mean,
 )
     n_windows = window_count(size(A, 1), window_size, step_size)
     names = feature_names(feature_set; n_bands = length(band_edges) - 1)
@@ -67,6 +70,7 @@ function window_features(
             high_band = high_band,
             band_edges = band_edges,
             feature_set = feature_set,
+            combination = combination,
         )
         i % decile == 0 && @info "feature extraction" windows = "$i / $n_windows"
     end

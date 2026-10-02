@@ -260,6 +260,48 @@ end
         extract_features(channels[:, 1] .+ tone, fs)[1];
         rtol = 0.05,
     )
+    # The other combination: of every feature the value farthest towards a
+    # signal among the channels — largest band power and spread, smallest
+    # entropy
+    extreme = extract_features(
+        window,
+        fs;
+        feature_set = :bands,
+        band_edges = edges,
+        combination = :max,
+    )
+    for band in 1:3
+        @test extreme[band] == maximum(f[band] for f in per_channel)
+    end
+    @test extreme[4] == minimum(f[4] for f in per_channel)
+    @test extreme[5] == maximum(f[5] for f in per_channel)
+    @test extract_features(
+        window[:, 1:1],
+        fs;
+        feature_set = :bands,
+        band_edges = edges,
+        combination = :max,
+    ) == single
+    @test extract_features(
+        window[:, 1],
+        fs;
+        feature_set = :bands,
+        band_edges = edges,
+        combination = :max,
+    ) == single
+    @test_throws ArgumentError extract_features(window, fs; combination = :sum)
+    # A tone in one channel only: the average halves its excess band power,
+    # the maximum keeps it
+    one = copy(channels)
+    one[:, 2] .+= tone
+    excess(f) = f[1] - 1
+    alone = extract_features(one[:, 2], fs)
+    @test isapprox(
+        excess(extract_features(one[:, 1:2], fs)),
+        excess(alone) / 2;
+        rtol = 0.05,
+    )
+    @test extract_features(one[:, 1:2], fs; combination = :max)[1] == alone[1]
     # Sliding windows of a multichannel record
     table = window_features(
         channels,
@@ -272,6 +314,21 @@ end
     )
     @test size(table) == (39, 4)
     @test Tuple(table[11, :]) == extract_features(channels[5001:6000, :], fs)
+    @test Tuple(
+        window_features(
+            channels,
+            fs;
+            window_size = 1000,
+            step_size = 500,
+            low_band = (1e-3, 5e-3),
+            high_band = (5e-3, 1e-1),
+            feature_set = :whitened,
+            combination = :max,
+        )[
+            11,
+            :,
+        ],
+    ) == extract_features(channels[5001:6000, :], fs; combination = :max)
     @test window_features(
         channels[:, 1],
         fs;

@@ -24,7 +24,10 @@ follow [Semantic Versioning](https://semver.org/).
   the features of the channel-averaged tapered periodogram
   (`network_periodogram`), so the feature dimension does not depend on the
   number of channels; one channel as a matrix gives the features of the
-  vector bit for bit.
+  vector bit for bit. `combination = :max` (`CHANNEL_COMBINATIONS`)
+  computes the features of every channel instead and keeps, of each, the
+  value farthest towards a signal, so that a signal seen by one channel
+  only is not diluted by the others.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`

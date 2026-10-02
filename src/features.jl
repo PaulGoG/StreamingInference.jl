@@ -12,6 +12,16 @@ Isfan et al. 2025), and `:bands` (one power per band between consecutive
 const FEATURE_SETS = (:whitened, :paper, :bands)
 
 """
+    CHANNEL_COMBINATIONS
+
+How [`extract_features`](@ref) combines the synchronous channels of a
+window: `:mean` (features of the channel-averaged periodogram) or `:max`
+(the features of every channel, combined by the value farthest towards a
+signal).
+"""
+const CHANNEL_COMBINATIONS = (:mean, :max)
+
+"""
     feature_names(feature_set; n_bands = 2) -> Vector{Symbol}
 
 Column names of the feature table produced by [`extract_features`](@ref)
@@ -57,7 +67,7 @@ end
 """
     extract_features(x, sample_rate = 0.2; low_band = (1e-3, 5e-3),
                      high_band = (5e-3, 1e-1), band_edges = nothing, taper = :hann,
-                     feature_set = :whitened)
+                     feature_set = :whitened, combination = :mean)
 
 Feature vector of a window `x` sampled at `sample_rate` [Hz], computed
 from its tapered periodogram ``P_k`` ([`tapered_periodogram`](@ref)).
@@ -65,9 +75,20 @@ Returns a tuple of `Float32` whose entries are named by
 [`feature_names`](@ref).
 
 A matrix `x` holds a window of several synchronous channels, one per
-column; the features are then those of the channel-averaged periodogram
-([`network_periodogram`](@ref)), so their number does not depend on the
-number of channels.
+column, and `combination` says how they enter; either way the number of
+features does not depend on the number of channels.
+
+- `:mean` (default): the features of the channel-averaged periodogram
+  ([`network_periodogram`](@ref)), the excess power of the network. It is
+  the best incoherent statistic for a signal split equally between the
+  channels, and dilutes one that a single channel sees: its excess power is
+  divided by the number of channels while the noise spread falls only as
+  the root of it.
+- `:max`: the features of every channel, combined by the value that lies
+  farthest towards a signal — the largest band power and power spread (and,
+  for `:paper`, mean and maximum), the smallest entropy. A signal seen by
+  one channel keeps its features; the noise level of a maximum over ``C``
+  channels is higher than that of one, a trials factor.
 
 `feature_set = :whitened` (the default) expects a window of the
 **whitened** record ([`whiten_record`](@ref)), whose periodogram has unit
@@ -104,10 +125,38 @@ function extract_features(
     band_edges::Union{Nothing,AbstractVector{<:Real}} = nothing,
     taper::Symbol = :hann,
     feature_set::Symbol = :whitened,
+    combination::Symbol = :mean,
 )
     sample_rate > 0 || throw(ArgumentError("sample_rate = $sample_rate; must be positive."))
     feature_set in FEATURE_SETS ||
         throw(ArgumentError("feature_set = $feature_set; expected one of $(FEATURE_SETS)."))
+    combination in CHANNEL_COMBINATIONS || throw(
+        ArgumentError(
+            "combination = :$combination; expected one of $(CHANNEL_COMBINATIONS).",
+        ),
+    )
+    if combination == :max && x isa AbstractMatrix && size(x, 2) > 1
+        per_channel = [
+            extract_features(
+                @view(x[:, c]),
+                sample_rate;
+                low_band = low_band,
+                high_band = high_band,
+                band_edges = band_edges,
+                taper = taper,
+                feature_set = feature_set,
+            ) for c in axes(x, 2)
+        ]
+        names = feature_names(feature_set; n_bands = max(length(per_channel[1]) - 2, 1))
+        # The entropy falls when a signal concentrates the power; every
+        # other feature rises with it
+        return ntuple(
+            j ->
+                names[j] == :spectral_entropy ? minimum(f[j] for f in per_channel) :
+                maximum(f[j] for f in per_channel),
+            length(names),
+        )
+    end
     edges = feature_set == :bands ? check_band_edges(band_edges) : Float64[]
     power = network_periodogram(x; taper = taper)
     n_samples = size(x, 1)
