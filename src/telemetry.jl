@@ -185,7 +185,9 @@ function list_batches end
     read_batch(run, name) -> Vector{Float32}
 
 Payload samples of the delivered batch `name`, its segments concatenated in
-ascending segment id.
+ascending segment id: a vector, or for a run of several synchronous channels
+a matrix with one column per channel (the delivery of a batch is common to
+its channels).
 """
 function read_batch end
 
@@ -208,20 +210,21 @@ function run_state end
 
 In-memory run used by the tests: the whole `payload`, an arrival feed
 `events`, and the names of batches declared lost. Batch `k` holds payload
-rows [`batch_rows`](@ref)`(k, P)`; every batch of the payload exists.
+rows [`batch_rows`](@ref)`(k, P)`; every batch of the payload exists. A
+matrix `payload` holds several synchronous channels, one per column.
 """
 struct MemoryTelemetryRun <: AbstractTelemetryRun
     geometry::RunGeometry
-    payload::Vector{Float32}
+    payload::Union{Vector{Float32},Matrix{Float32}}
     events::Vector{ArrivalEvent}
     lost::Set{String}
     function MemoryTelemetryRun(
         geometry::RunGeometry,
-        payload::AbstractVector{<:Real},
+        payload::AbstractVecOrMat{<:Real},
         events::AbstractVector{ArrivalEvent};
         lost = String[],
     )
-        length(payload) >= geometry.points_per_batch ||
+        size(payload, 1) >= geometry.points_per_batch ||
             throw(ArgumentError("the payload holds fewer samples than one batch."))
         bounded = RunGeometry(
             geometry.sample_rate,
@@ -229,9 +232,9 @@ struct MemoryTelemetryRun <: AbstractTelemetryRun
             geometry.batch_size,
             geometry.start_sim_time,
             geometry.package_version;
-            payload_rows = length(payload),
+            payload_rows = size(payload, 1),
         )
-        return new(bounded, Vector{Float32}(payload), collect(events), Set(String.(lost)))
+        return new(bounded, Array{Float32}(payload), collect(events), Set(String.(lost)))
     end
 end
 
@@ -239,7 +242,7 @@ run_geometry(run::MemoryTelemetryRun) = run.geometry
 
 function list_batches(run::MemoryTelemetryRun)
     P = run.geometry.points_per_batch
-    n = div(length(run.payload), P)
+    n = div(size(run.payload, 1), P)
     return [
         BatchRecord(
             "LIVE_batch_$k",
@@ -255,9 +258,9 @@ end
 function read_batch(run::MemoryTelemetryRun, name::AbstractString)
     k, _ = parse_batch_name(name)
     rows = batch_rows(k, run.geometry.points_per_batch)
-    last(rows) <= length(run.payload) ||
+    last(rows) <= size(run.payload, 1) ||
         throw(ArgumentError("batch $name lies beyond the payload."))
-    return run.payload[rows]
+    return run.payload isa AbstractVector ? run.payload[rows] : run.payload[rows, :]
 end
 
 arrival_events(run::MemoryTelemetryRun) = run.events
@@ -558,10 +561,14 @@ struct StreamingDetector{S<:AbstractWindowScorer}
 end
 
 """
-    condition_window(detector, stretch, offset; psd = detector.psd) -> AbstractVector{Float64}
+    condition_window(detector, stretch, offset; psd = detector.psd) -> AbstractVecOrMat{Float64}
 
 The window starting at `offset` (1-based) of the contiguous delivered
-`stretch`, conditioned as the batch pipeline conditions a record: the
+`stretch`, conditioned as the batch pipeline conditions a record. A matrix
+`stretch` holds several synchronous channels, one per column; each is
+conditioned on its own with the PSD of its position in `psd`
+([`channel_psds`](@ref)), and the window is returned as a matrix. For one
+channel: the
 stretch high-passed ([`highpass_record`](@ref)) and, unless `psd` is
 `nothing`, whitened by `psd` ([`whiten_record`](@ref)) as a whole, then
 the window cut from it. `psd` replaces the detector's whitening PSD for
@@ -590,6 +597,43 @@ function condition_window(
     return view(record, offset:(offset+W-1))
 end
 
+function condition_window(
+    detector::StreamingDetector,
+    stretch::AbstractMatrix{<:Real},
+    offset::Integer;
+    psd = detector.psd,
+)
+    W = detector.window_size
+    1 <= offset && offset + W - 1 <= size(stretch, 1) ||
+        throw(ArgumentError("window at offset $offset does not fit the stretch."))
+    n_channels = size(stretch, 2)
+    psds = channel_psds(psd, n_channels)
+    conditioned = Matrix{Float64}(undef, W, n_channels)
+    for c in 1:n_channels
+        conditioned[:, c] =
+            condition_window(detector, view(stretch, :, c), offset; psd = psds[c])
+    end
+    return conditioned
+end
+
+"""
+    channel_psds(psd, n_channels)
+
+The whitening PSD of every channel of a multichannel stretch: `psd` is
+`nothing` (no whitening) or a collection of one PSD per channel. A single
+callable is refused, since the channels do not share a spectrum.
+"""
+function channel_psds(psd, n_channels::Integer)
+    psd === nothing && return ntuple(_ -> nothing, n_channels)
+    (psd isa Union{Tuple,AbstractVector} && length(psd) == n_channels) || throw(
+        ArgumentError(
+            "a stretch of $n_channels channels needs one whitening PSD per channel " *
+            "(a tuple or vector of $n_channels), or none.",
+        ),
+    )
+    return psd
+end
+
 """
     score_window(detector, stretch, offset; psd = detector.psd) -> Float32
 
@@ -599,7 +643,7 @@ by the detector's scorer ([`window_score`](@ref)).
 """
 function score_window(
     detector::StreamingDetector,
-    stretch::AbstractVector{<:Real},
+    stretch::AbstractVecOrMat{<:Real},
     offset::Integer;
     psd = detector.psd,
 )
@@ -685,7 +729,7 @@ scorer.
 """
 struct PendingWindow
     rows::UnitRange{Int}
-    samples::Vector{Float64}
+    samples::Union{Vector{Float64},Matrix{Float64}}
     complete_at::Dates.DateTime
     completing_batch::String
     coverage::Float64
@@ -772,7 +816,9 @@ contains data still to be delivered. The estimate is redone once the end
 of that record has moved by `refresh_rows` rows since the previous one.
 While no delivered run behind a window holds a segment — at the start of
 a mission — the window is whitened by the previous estimate, and by the
-detector's own static PSD only before any estimate exists.
+detector's own static PSD only before any estimate exists. A run of
+several channels gets one estimate per channel, each from that channel of
+the same delivered runs.
 """
 struct TrailingWelch
     span_rows::Int
@@ -831,7 +877,7 @@ mutable struct ReplayState
     # first rows kept sorted: a producer that discarded production keeps
     # numbering the batches it stores, so a batch's rows follow its content
     # epoch and not its index.
-    payload::Dict{Int,Vector{Float32}}
+    payload::Dict{Int,Union{Vector{Float32},Matrix{Float32}}}
     starts::Vector{Int}
     windows::Vector{WindowRecord}
     excluded::Vector{UnitRange{Int}}
@@ -884,7 +930,7 @@ mutable struct ReplayState
             Dict(b.name => b for b in list_batches(run)),
             Coverage(),
             scheduler,
-            Dict{Int,Vector{Float32}}(),
+            Dict{Int,Union{Vector{Float32},Matrix{Float32}}}(),
             Int[],
             WindowRecord[],
             UnitRange{Int}[],
@@ -899,23 +945,33 @@ mutable struct ReplayState
 end
 
 """
-    delivered_rows(state, rows) -> Vector{Float32}
+    delivered_rows(state, rows) -> Vector{Float32} or Matrix{Float32}
 
 The payload of the delivered rows `rows`, assembled from the batches on the
-ground by the rows they hold (`ArgumentError` when a row is not covered).
+ground by the rows they hold (`ArgumentError` when a row is not covered);
+a matrix with one column per channel when the run delivers several.
 """
 function delivered_rows(state::ReplayState, rows::UnitRange{Int})
     lo, hi = first(rows), last(rows)
-    samples = Vector{Float32}(undef, hi - lo + 1)
+    n_channels = isempty(state.payload) ? 1 : size(first(values(state.payload)), 2)
+    multichannel =
+        !isempty(state.payload) && first(values(state.payload)) isa AbstractMatrix
+    samples =
+        multichannel ? Matrix{Float32}(undef, hi - lo + 1, n_channels) :
+        Vector{Float32}(undef, hi - lo + 1)
     covered = falses(hi - lo + 1)
     i = max(1, searchsortedlast(state.starts, lo))
     while i <= length(state.starts) && state.starts[i] <= hi
         s = state.starts[i]
         data = state.payload[s]
         a = max(lo, s)
-        b = min(hi, s + length(data) - 1)
+        b = min(hi, s + size(data, 1) - 1)
         if a <= b
-            samples[(a-lo+1):(b-lo+1)] = view(data, (a-s+1):(b-s+1))
+            if multichannel
+                samples[(a-lo+1):(b-lo+1), :] = view(data, (a-s+1):(b-s+1), :)
+            else
+                samples[(a-lo+1):(b-lo+1)] = view(data, (a-s+1):(b-s+1))
+            end
             covered[(a-lo+1):(b-lo+1)] .= true
         end
         i += 1
@@ -967,25 +1023,32 @@ function whitening_psd!(state::ReplayState, window::UnitRange{Int})
     if state.trailing_psd !== nothing && abs(hi - state.trailing_row) < tw.refresh_rows
         return state.trailing_psd, state.trailing_row
     end
-    records = map(runs) do r
-        record = Float64.(delivered_rows(state, r))
-        d.highpass_cutoff_hz > 0 || return record
-        filtered = highpass_record(
-            record,
+    delivered = [delivered_rows(state, r) for r in runs]
+    # One estimate per channel, each from that channel of the delivered runs
+    estimate(channel) = begin
+        records = map(delivered) do samples
+            record = Float64.(channel === nothing ? samples : view(samples, :, channel))
+            d.highpass_cutoff_hz > 0 || return record
+            filtered = highpass_record(
+                record,
+                d.sample_rate;
+                cutoff = d.highpass_cutoff_hz,
+                order = d.highpass_order,
+            )
+            filtered[(edge+1):(end-edge)]
+        end
+        freqs, table = welch_psd(
+            records,
             d.sample_rate;
-            cutoff = d.highpass_cutoff_hz,
-            order = d.highpass_order,
+            segment_length = tw.segment_length,
+            average = :median,
         )
-        filtered[(edge+1):(end-edge)]
+        tw.smoothing_dex > 0 && (table = smooth_psd(freqs, table, tw.smoothing_dex))
+        interpolated_psd(freqs, table)
     end
-    freqs, table = welch_psd(
-        records,
-        d.sample_rate;
-        segment_length = tw.segment_length,
-        average = :median,
-    )
-    tw.smoothing_dex > 0 && (table = smooth_psd(freqs, table, tw.smoothing_dex))
-    state.trailing_psd = interpolated_psd(freqs, table)
+    state.trailing_psd =
+        first(delivered) isa AbstractMatrix ?
+        [estimate(c) for c in axes(first(delivered), 2)] : estimate(nothing)
     state.trailing_row = hi
     return state.trailing_psd, hi
 end
@@ -1039,7 +1102,17 @@ function process_event!(
         start = first(batch.rows)
         haskey(state.payload, start) ||
             insert!(state.starts, searchsortedfirst(state.starts, start), start)
-        state.payload[start] = read_batch(run, batch.name)
+        data = read_batch(run, batch.name)
+        if !isempty(state.payload)
+            held = first(values(state.payload))
+            (ndims(held) == ndims(data) && size(held, 2) == size(data, 2)) || throw(
+                ArgumentError(
+                    "batch $(batch.name) holds $(size(data, 2)) channels; the batches " *
+                    "before it hold $(size(held, 2)).",
+                ),
+            )
+        end
+        state.payload[start] = data
         add!(state.coverage, batch.rows)
         # Permanent holes (lost or pruned batches with their erosion) stay
         # excluded whatever arrives later around them.
@@ -1103,7 +1176,7 @@ function hold_window!(
     state::ReplayState,
     m::Integer,
     window::UnitRange{Int},
-    stretch::AbstractVector{<:Real},
+    stretch::AbstractVecOrMat{<:Real},
     offset::Integer,
     psd,
     psd_row::Integer,

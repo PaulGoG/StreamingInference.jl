@@ -49,6 +49,14 @@ StreamingInference.window_score(::RMSScorer, window::AbstractVector{<:Real}, ::R
     Float32(sqrt(sum(abs2, window) / length(window)))
 StreamingInference.score_bounds(::RMSScorer) = (0.0, Inf)
 
+# A reference scorer of a multichannel window: the RMS of one column.
+struct ColumnRMS <: AbstractWindowScorer
+    column::Int
+end
+StreamingInference.window_score(s::ColumnRMS, window::AbstractMatrix{<:Real}, ::Real) =
+    Float32(sqrt(sum(abs2, view(window, :, s.column)) / size(window, 1)))
+StreamingInference.score_bounds(::ColumnRMS) = (0.0, Inf)
+
 # A stateful reference estimator: the RMS of each window, with the sequence
 # of scores, gaps and resets it received.
 mutable struct SequenceRMS <: AbstractWindowScorer
@@ -711,4 +719,72 @@ end
     @test_throws ArgumentError GapEvent(1, 2, :other, epoch)
     @test_throws ArgumentError OrderedCommit(10; late_policy = :other)
     @test_throws ArgumentError OrderedCommit(10; order_horizon = Dates.Hour(0))
+end
+
+@testset "Telemetry coupling (several channels)" begin
+    rng = StableRNG(77)
+    fs = 0.2
+    geometry = RunGeometry(fs, 50.0, 10, Dates.DateTime(2035, 1, 1))
+    P = geometry.points_per_batch
+    n_batches = 60
+    psds = (f -> 1e-40 * (1 + (1e-3 / f)^2), f -> 4e-40 * (1 + (2e-3 / f)^2))
+    payload = hcat((synthesize_noise(rng, n_batches * P, fs; psd = psd) for psd in psds)...)
+    epoch = geometry.start_sim_time
+    # Delivered out of order, with one batch lost
+    order = vcat(1:20, 40:-1:21, 41:n_batches)
+    events = [
+        ArrivalEvent(
+            epoch + Dates.Minute(10 * i),
+            "LIVE_batch_$k",
+            k == 30 ? :lost : :ingested,
+            1,
+        ) for (i, k) in enumerate(order)
+    ]
+    detector(scorer, psd) = StreamingDetector(
+        scorer,
+        1.5;
+        sample_rate = fs,
+        window_size = 1000,
+        step_size = 100,
+        psd = psd,
+        context_windows = 2,
+    )
+    run2 = MemoryTelemetryRun(geometry, payload, events; lost = ["LIVE_batch_30"])
+    @test read_batch(run2, "LIVE_batch_3") == Float32.(payload[batch_rows(3, P), :])
+    single(c) =
+        MemoryTelemetryRun(geometry, payload[:, c], events; lost = ["LIVE_batch_30"])
+
+    # Each channel is conditioned on its own, with its own PSD: the replay of
+    # two channels scores a column as the replay of that channel alone does
+    for c in 1:2
+        both = replay_run(run2, detector(ColumnRMS(c), psds))
+        alone = replay_run(single(c), detector(RMSScorer(), psds[c]))
+        @test nrow(both) == nrow(alone) > 0
+        @test both.score == alone.score
+        @test both.complete_at == alone.complete_at
+        # and so do the causal PSD estimates, one per channel
+        trailing = TrailingWelch(3000, 500, 1000)
+        @test replay_run(run2, detector(ColumnRMS(c), psds); trailing_psd = trailing).score ==
+              replay_run(single(c), detector(RMSScorer(), psds[c]); trailing_psd = trailing).score
+    end
+    # One channel as a one-column matrix
+    column = MemoryTelemetryRun(geometry, payload[:, 1:1], events; lost = ["LIVE_batch_30"])
+    @test replay_run(column, detector(ColumnRMS(1), (psds[1],))).score ==
+          replay_run(single(1), detector(RMSScorer(), psds[1])).score
+    # No whitening at all is admitted; one PSD for two channels is not
+    @test nrow(replay_run(run2, detector(ColumnRMS(1), nothing))) > 0
+    @test_throws ArgumentError replay_run(run2, detector(ColumnRMS(1), psds[1]))
+    @test_throws ArgumentError replay_run(run2, detector(ColumnRMS(1), (psds[1],)))
+    # A scorer of single-channel windows refuses a multichannel one by name
+    @test_throws ArgumentError replay_run(run2, detector(RMSScorer(), psds))
+    # A feature map on the two channels: the features of the conditioned
+    # window, combined as the map says
+    window = condition_window(detector(ColumnRMS(1), psds), payload[1:5000, :], 2001)
+    @test size(window) == (1000, 2)
+    for combination in (:mean, :max)
+        map = FeatureMap(; combination = combination)
+        @test extract_features(map, window, fs) ==
+              extract_features(window, fs; combination = combination)
+    end
+    @test_throws ArgumentError FeatureMap(; combination = :sum)
 end

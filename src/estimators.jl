@@ -59,14 +59,21 @@ estimator_memory(::AbstractWindowEstimator) = Stateless()
 """
     window_score(scorer, window, sample_rate) -> Float32
 
-Score of one conditioned `window` (samples at `sample_rate` [Hz]).
-Implemented by every concrete [`AbstractWindowScorer`](@ref); the fallback
-throws an `ArgumentError` naming the scorer type.
+Score of one conditioned `window` (samples at `sample_rate` [Hz]): a
+vector, or in a replay of several synchronous channels a matrix with one
+column per channel. Implemented by every concrete
+[`AbstractWindowScorer`](@ref); the fallbacks throw an `ArgumentError`
+naming the scorer type.
 """
 function window_score end
 
 window_score(scorer::AbstractWindowScorer, ::AbstractVector{<:Real}, ::Real) =
     throw(ArgumentError("$(typeof(scorer)) does not implement window_score."))
+window_score(scorer::AbstractWindowScorer, ::AbstractMatrix{<:Real}, ::Real) = throw(
+    ArgumentError(
+        "$(typeof(scorer)) does not implement window_score for a window of several channels.",
+    ),
+)
 
 """
     score_label(scorer) -> String
@@ -85,32 +92,43 @@ score_bounds(::AbstractWindowScorer) = (0.0, 1.0)
 
 """
     FeatureMap(; feature_set = :whitened, low_band = (1e-3, 5e-3),
-               high_band = (5e-3, 1e-1), band_edges = [1e-3, 5e-3, 1e-1])
+               high_band = (5e-3, 1e-1), band_edges = [1e-3, 5e-3, 1e-1],
+               combination = :mean)
 
 The spectral features of a conditioned window ([`extract_features`](@ref)):
 the feature set and its analysis bands [Hz]. `band_edges` is validated
 ([`check_band_edges`](@ref)) for every set, as the conditioning of a run
-records it, and used only by the `:bands` set.
+records it, and used only by the `:bands` set. `combination` says how the
+channels of a multichannel window enter ([`CHANNEL_COMBINATIONS`](@ref))
+and has no effect on a single channel.
 """
 struct FeatureMap
     feature_set::Symbol
     low_band::Tuple{Float64,Float64}
     high_band::Tuple{Float64,Float64}
     band_edges::Vector{Float64}
+    combination::Symbol
     function FeatureMap(;
         feature_set::Symbol = :whitened,
         low_band::Tuple{Real,Real} = (1e-3, 5e-3),
         high_band::Tuple{Real,Real} = (5e-3, 1e-1),
         band_edges::AbstractVector{<:Real} = [1e-3, 5e-3, 1e-1],
+        combination::Symbol = :mean,
     )
         feature_set in FEATURE_SETS || throw(
             ArgumentError("feature_set = $feature_set; expected one of $(FEATURE_SETS)."),
+        )
+        combination in CHANNEL_COMBINATIONS || throw(
+            ArgumentError(
+                "combination = :$combination; expected one of $(CHANNEL_COMBINATIONS).",
+            ),
         )
         return new(
             feature_set,
             (Float64(low_band[1]), Float64(low_band[2])),
             (Float64(high_band[1]), Float64(high_band[2])),
             check_band_edges(band_edges),
+            combination,
         )
     end
 end
@@ -122,7 +140,7 @@ Features of `window` under the set and bands of `map`.
 """
 function extract_features(
     map::FeatureMap,
-    window::AbstractVector{<:Real},
+    window::AbstractVecOrMat{<:Real},
     sample_rate::Real,
 )
     return extract_features(
@@ -132,6 +150,7 @@ function extract_features(
         high_band = map.high_band,
         band_edges = map.band_edges,
         feature_set = map.feature_set,
+        combination = map.combination,
     )
 end
 

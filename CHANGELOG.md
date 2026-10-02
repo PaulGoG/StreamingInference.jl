@@ -28,6 +28,14 @@ follow [Semantic Versioning](https://semver.org/).
   computes the features of every channel instead and keeps, of each, the
   value farthest towards a signal, so that a signal seen by one channel
   only is not diluted by the others.
+- The replay of several synchronous channels: `read_batch` may return a
+  matrix with one column per channel (the delivery of a batch is common to
+  its channels), `MemoryTelemetryRun` takes such a payload,
+  `condition_window` conditions every channel on its own with the PSD of
+  its position in the detector's `psd` (a tuple or vector, one per channel),
+  a `TrailingWelch` replay keeps one causal estimate per channel, and the
+  scorer receives the window as a matrix. `FeatureMap` carries the
+  `combination` of the channels. A single-channel replay is unchanged.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`
