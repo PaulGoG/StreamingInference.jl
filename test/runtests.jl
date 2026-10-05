@@ -484,6 +484,79 @@ end
     end
 end
 
+@testset "Records with gaps" begin
+    x = [1.0, 2.0, NaN, NaN, 5.0, 6.0, 7.0, Inf, 9.0]
+    @test finite_stretches(x) == [1:2, 5:7, 9:9]
+    @test finite_stretches(x; shortest = 2) == [1:2, 5:7]
+    @test finite_stretches(x; shortest = 4) == UnitRange{Int}[]
+    # A row is in a gap when any column is not finite
+    y = [1.0, NaN, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    @test finite_stretches(x, y) == [1:1, 5:7, 9:9]
+    @test finite_stretches(ones(4)) == [1:4]
+    @test_throws DimensionMismatch finite_stretches(x, ones(3))
+    @test_throws ArgumentError finite_stretches(x; shortest = 0)
+
+    # Runs end where the window index jumps
+    mask = Bool[1, 1, 1, 0, 1, 1, 0, 1]
+    windows = [11, 12, 20, 21, 22, 30, 31, 32]
+    @test contiguous_runs(mask) == [1:3, 5:6, 8:8]
+    @test contiguous_runs(mask, windows) == [1:2, 3:3, 5:5, 6:6, 8:8]
+    @test contiguous_runs(mask, collect(1:8)) == contiguous_runs(mask)
+    @test contiguous_runs(mask, nothing) == contiguous_runs(mask)
+    @test_throws DimensionMismatch contiguous_runs(mask, [1, 2])
+    @test_throws ArgumentError contiguous_runs(mask, [1, 2, 2, 4, 5, 6, 7, 8])
+
+    # An alarm and an event that straddle a gap count on both sides of it
+    decisions = [0, 1, 1, 1, 0, 0, 1, 1, 0, 0]
+    labels = [0, 0, 0, 0, 0, 0, 1, 1, 1, 0]
+    index = [1, 2, 3, 10, 11, 12, 13, 14, 20, 21]
+    plain = event_metrics(decisions, labels; step_size = 100, sample_rate = 0.2)
+    gapped = event_metrics(
+        decisions,
+        labels;
+        step_size = 100,
+        sample_rate = 0.2,
+        windows = index,
+    )
+    @test plain.n_false_alarm_episodes == 1 && gapped.n_false_alarm_episodes == 2
+    @test plain.n_events == 1 && gapped.n_events == 2
+    @test plain.n_detected == 1 && gapped.n_detected == 1
+    @test gapped.recall == plain.recall && gapped.observation_days == plain.observation_days
+    @test event_metrics(
+        decisions,
+        labels;
+        step_size = 100,
+        sample_rate = 0.2,
+        windows = collect(1:10),
+    ) == plain
+
+    # The window index of every row of a product, without and with gaps
+    mktempdir() do dir
+        features = joinpath(dir, "x_features.csv")
+        @test_throws ArgumentError window_indices(features)
+        sidecar = joinpath(dir, "x_features.toml")
+        write(sidecar, "[features]\nfirst_window = 101\nn_windows = 4\n")
+        @test window_indices(features) == [101, 102, 103, 104]
+        write(sidecar, "[features]\nfirst_window = 101\n")
+        @test_throws ArgumentError window_indices(features)
+        stretches = [
+            Dict("first_window" => 101, "n_windows" => 2),
+            Dict("first_window" => 250, "n_windows" => 3),
+        ]
+        open(sidecar, "w") do io
+            TOML.print(
+                io,
+                Dict("features" => Dict("n_windows" => 5, "stretches" => stretches)),
+            )
+        end
+        @test window_indices(features) == [101, 102, 250, 251, 252]
+        open(sidecar, "w") do io
+            TOML.print(io, Dict("features" => Dict("stretches" => reverse(stretches))))
+        end
+        @test_throws ArgumentError window_indices(features)
+    end
+end
+
 @testset "Evaluation protocol" begin
     # Chronological split: 70/15/15 of 100 windows with a five-window buffer
     blocks = chronological_split(100; buffer = 5)

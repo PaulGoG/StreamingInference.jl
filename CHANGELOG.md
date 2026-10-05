@@ -41,6 +41,12 @@ follow [Semantic Versioning](https://semver.org/).
   content the run carried.
 - `recorded_channels` reads the channel set a product was made from out of
   its sidecar, with a default for the products that record none.
+- Records with gaps: `finite_stretches` gives the stretches of a record
+  between samples marked `NaN`; `window_indices` the record window index of
+  every row of a feature table, which jumps between the stretches of such
+  a product (`stretches` in its sidecar); `contiguous_runs` and
+  `event_metrics` take those indices (`windows`) and end events and
+  false-alarm episodes at a gap instead of running across it.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`

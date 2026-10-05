@@ -140,7 +140,43 @@ function contiguous_runs(mask::AbstractVector{Bool})
 end
 
 """
-    event_metrics(decisions, labels; step_size, sample_rate) -> NamedTuple
+    contiguous_runs(mask, windows) -> Vector{UnitRange{Int}}
+
+Maximal runs of `true` in `mask` over consecutive windows of a record:
+`windows` holds the record window index of every row, strictly increasing,
+and a run ends where the index jumps, at a gap of the record. `nothing`
+for `windows` is the case without gaps.
+"""
+function contiguous_runs(mask::AbstractVector{Bool}, windows::AbstractVector{<:Integer})
+    length(windows) == length(mask) || throw(
+        DimensionMismatch("$(length(windows)) window indices for $(length(mask)) rows."),
+    )
+    runs = UnitRange{Int}[]
+    start = 0
+    for (i, m) in enumerate(mask)
+        if i > 1
+            windows[i] > windows[i-1] ||
+                throw(ArgumentError("the window indices must increase strictly."))
+            if start != 0 && windows[i] != windows[i-1] + 1
+                push!(runs, start:(i-1))
+                start = 0
+            end
+        end
+        if m && start == 0
+            start = i
+        elseif !m && start != 0
+            push!(runs, start:(i-1))
+            start = 0
+        end
+    end
+    start != 0 && push!(runs, start:length(mask))
+    return runs
+end
+
+contiguous_runs(mask::AbstractVector{Bool}, ::Nothing) = contiguous_runs(mask)
+
+"""
+    event_metrics(decisions, labels; step_size, sample_rate, windows = nothing) -> NamedTuple
 
 Window-level and event-level detection statistics of binary `decisions`
 against binary `labels` over chronologically ordered windows advanced by
@@ -156,12 +192,18 @@ against binary `labels` over chronologically ordered windows advanced by
   contributes its unlabelled excess, so a permanently raised alarm is not
   free of false alarms); `observation_days`; `false_alarms_per_30d`, the
   operational false-alarm rate.
+
+For a table of a record with gaps, `windows` gives the record window index
+of every row ([`window_indices`](@ref)): events and false-alarm episodes
+then end at a gap instead of running across it
+([`contiguous_runs`](@ref)). The observation time is that of the rows.
 """
 function event_metrics(
     decisions::AbstractVector{<:Integer},
     labels::AbstractVector{<:Integer};
     step_size::Integer,
     sample_rate::Real,
+    windows::Union{Nothing,AbstractVector{<:Integer}} = nothing,
 )
     n = length(labels)
     n == length(decisions) ||
@@ -183,9 +225,9 @@ function event_metrics(
     balanced_accuracy =
         (isnan(recall) || isnan(specificity)) ? NaN : (recall + specificity) / 2
 
-    events = contiguous_runs(l)
+    events = contiguous_runs(l, windows)
     n_detected = count(r -> any(view(d, r)), events)
-    n_false_alarm_episodes = length(contiguous_runs(d .& .!l))
+    n_false_alarm_episodes = length(contiguous_runs(d .& .!l, windows))
     observation_days = n * step_size / sample_rate / 86400
     return (
         precision = precision,

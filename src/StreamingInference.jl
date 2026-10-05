@@ -60,6 +60,7 @@ export finalize_replay!, gaps_table, replay_state
 export content_digest, parameter_digest, product_table, recorded_channels
 export scored_at
 export with_pipeline_root, config_root
+export finite_stretches, window_indices
 
 public LEGEND_STYLE, decimation, decade_label, log_ticks, dense_log_ticks
 public ANIMATION_PX_PER_UNIT, check_frame_scale, check_gif_path, frame_schedule

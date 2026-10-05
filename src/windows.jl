@@ -21,6 +21,35 @@ function window_count(n_points::Integer, window_size::Integer, step_size::Intege
 end
 
 """
+    finite_stretches(columns...; shortest = 1) -> Vector{UnitRange{Int}}
+
+Maximal runs of rows at which every one of the `columns` (vectors of one
+length) is finite, in order: the stretches of a record between its gaps,
+whose samples are marked by `NaN`. Runs of fewer than `shortest` rows are
+dropped.
+"""
+function finite_stretches(columns::AbstractVector{<:Real}...; shortest::Integer = 1)
+    isempty(columns) && throw(ArgumentError("no column given."))
+    n = length(first(columns))
+    all(c -> length(c) == n, columns) ||
+        throw(DimensionMismatch("the columns differ in length."))
+    shortest >= 1 || throw(ArgumentError("shortest = $shortest; must be at least 1."))
+    stretches = UnitRange{Int}[]
+    start = 0
+    for i in 1:n
+        finite = all(c -> isfinite(c[i]), columns)
+        if finite && start == 0
+            start = i
+        elseif !finite && start != 0
+            i - start >= shortest && push!(stretches, start:(i-1))
+            start = 0
+        end
+    end
+    start != 0 && n - start + 1 >= shortest && push!(stretches, start:n)
+    return stretches
+end
+
+"""
     edge_margin_windows(settings) -> Int
 
 Number of windows dropped at each end of a record for the `edge_margin`

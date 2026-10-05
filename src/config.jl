@@ -294,3 +294,37 @@ function feature_geometry(features_path::AbstractString, config::AbstractDict)
         first_window = cfgget(sec, "first_window", 1; type = Int, min = 1),
     )
 end
+
+"""
+    window_indices(features_path) -> Vector{Int}
+
+Record window index of every row of a feature table, from its sidecar
+`<stem>.toml`: `first_window`, `first_window + 1`, … over `n_windows` rows
+for the product of a record without gaps, and the windows of every stretch
+in turn (`stretches`, a list of tables with `first_window` and
+`n_windows`) for the product of a record with gaps, where the index jumps
+between stretches. `ArgumentError` without a sidecar, without `n_windows`,
+or for stretches that are not in ascending order.
+"""
+function window_indices(features_path::AbstractString)
+    sidecar = replace(features_path, r"\.csv$" => ".toml")
+    isfile(sidecar) || throw(ArgumentError("feature sidecar not found: $sidecar"))
+    features = get(TOML.parsefile(sidecar), "features", Dict{String,Any}())
+    stretches = get(features, "stretches", nothing)
+    if stretches === nothing
+        haskey(features, "n_windows") ||
+            throw(ArgumentError("the sidecar $sidecar does not record n_windows."))
+        first_window = cfgget(features, "first_window", 1; type = Int, min = 1)
+        n_windows = cfgget(features, "n_windows", 1; type = Int, min = 1)
+        return collect(first_window:(first_window+n_windows-1))
+    end
+    indices = Int[]
+    for stretch in stretches
+        first_window = cfgget(stretch, "first_window", 1; type = Int, min = 1)
+        n_windows = cfgget(stretch, "n_windows", 1; type = Int, min = 1)
+        (isempty(indices) || first_window > last(indices)) ||
+            throw(ArgumentError("the stretches of $sidecar are not in ascending order."))
+        append!(indices, first_window:(first_window+n_windows-1))
+    end
+    return indices
+end
