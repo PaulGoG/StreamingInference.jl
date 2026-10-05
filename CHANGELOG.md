@@ -39,6 +39,8 @@ follow [Semantic Versioning](https://semver.org/).
   `ScheduledRecordRun` applies the delivery of one run to the content of a
   local record of several channels, after checking that the record is the
   content the run carried.
+- `recorded_channels` reads the channel set a product was made from out of
+  its sidecar, with a default for the products that record none.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`

@@ -346,6 +346,26 @@ function product_table(
 end
 
 """
+    recorded_channels(table_path; default) -> String
+
+The channel set a product was made from, as the sidecar of the table at
+`table_path` records it (`<stem>.toml` beside `<stem>.csv`): `channels` of
+its `[product]` table ([`product_table`](@ref)), else of `[features]`.
+`default` is returned for a table without a sidecar or whose sidecar names
+no channel set, as the products made before the channel sets were recorded.
+"""
+function recorded_channels(table_path::AbstractString; default::AbstractString)
+    sidecar = replace(table_path, r"\.csv$" => ".toml")
+    isfile(sidecar) || return String(default)
+    tables = TOML.parsefile(sidecar)
+    for name in ("product", "features")
+        channels = get(get(tables, name, Dict{String,Any}()), "channels", nothing)
+        channels isa AbstractString && return String(channels)
+    end
+    return String(default)
+end
+
+"""
     backup_existing!(path) -> Union{Nothing, String}
 
 Move an existing file at `path` to `<stem>_#k<ext>` with the first free

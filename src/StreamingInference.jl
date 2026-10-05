@@ -57,7 +57,7 @@ export condition_window, ReplayState, process_event!, windows_table, replay_run
 export follow_run, alert_latency_table, event_merger_times
 export reset_estimator!, GapEvent, estimator_gap!, PendingWindow, OrderedCommit
 export finalize_replay!, gaps_table, replay_state
-export content_digest, parameter_digest, product_table
+export content_digest, parameter_digest, product_table, recorded_channels
 export scored_at
 export with_pipeline_root, config_root
 

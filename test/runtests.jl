@@ -927,6 +927,26 @@ end
     @test table["parents"] == Dict{String,Any}("source" => "x")
     @test_throws ArgumentError product_table("features"; channels = "A", schema = 0)
     mktempdir() do dir
+        # The channel set of a product: [product] before [features], the
+        # default without a sidecar or without a record
+        features = joinpath(dir, "x_features.csv")
+        @test recorded_channels(features; default = "A") == "A"
+        sidecar = joinpath(dir, "x_features.toml")
+        write(sidecar, "[features]\nwindow_size = 1000\n")
+        @test recorded_channels(features; default = "A") == "A"
+        write(sidecar, "[features]\nchannels = \"AE\"\n")
+        @test recorded_channels(features; default = "A") == "AE"
+        open(
+            io -> TOML.print(
+                io,
+                Dict("product" => table, "features" => Dict("channels" => "AE")),
+            ),
+            sidecar,
+            "w",
+        )
+        @test recorded_channels(features; default = "AE") == "A"
+    end
+    mktempdir() do dir
         path = joinpath(dir, "record.bin")
         write(path, "abc")
         digest = content_digest(path)
