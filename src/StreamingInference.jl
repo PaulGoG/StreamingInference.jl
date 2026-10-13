@@ -66,6 +66,7 @@ public LEGEND_STYLE, decimation, decade_label, log_ticks, dense_log_ticks
 public ANIMATION_PX_PER_UNIT, check_frame_scale, check_gif_path, frame_schedule
 public top_legend!, label_bands!, FIGURE_FONTSIZE, TICK_FONTSIZE, ANNOTATION_FONTSIZE
 public check_band_edges, edge_margin_windows, window_count, score_limits
+public TIMESTAMP_FORMAT
 
 include("config.jl")
 include("provenance.jl")

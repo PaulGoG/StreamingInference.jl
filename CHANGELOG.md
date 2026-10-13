@@ -60,3 +60,10 @@ follow [Semantic Versioning](https://semver.org/).
   (`streaminference_version`); inside MilliHertzQML.jl both were one.
 - `window_score` has a fallback for `AbstractWindowScorer` that throws an
   `ArgumentError` naming a scorer type without a method.
+
+### Changed
+- `write_csv` writes every `DateTime` column in one stated form,
+  `TIMESTAMP_FORMAT` (`yyyy-mm-ddTHH:MM:SS.s`), the form CSV.jl 0.10 wrote
+  by default and the products carry; CSV.jl 1.x, which DeepSpaceTelemetry
+  2.6.0 brings into the script and test environments of the downstream
+  packages, would otherwise write the instants without the decimal.

@@ -410,15 +410,28 @@ function write_toml(
 end
 
 """
+    TIMESTAMP_FORMAT
+
+The text form of a `DateTime` column in every CSV product,
+`yyyy-mm-ddTHH:MM:SS.s` (the seconds with one to three decimals, as in
+`2035-03-19T16:27:30.0` and `2035-03-18T17:40:33.6`). The form is stated
+rather than left to the CSV library: CSV.jl 0.10 wrote it by default and
+CSV.jl 1.x writes a `DateTime` without the decimal, so a product written
+by either reads the same and compares byte for byte.
+"""
+const TIMESTAMP_FORMAT = Dates.dateformat"yyyy-mm-dd\THH:MM:SS.s"
+
+"""
     write_csv(path, table; safe = true)
 
 Write `table` with `CSV.write` at `path`, backing up an existing file first
-when `safe`. Returns `path`.
+when `safe`; `DateTime` columns are written in [`TIMESTAMP_FORMAT`](@ref).
+Returns `path`.
 """
 function write_csv(path::AbstractString, table; safe::Bool = true)
     safe && backup_existing!(path)
     mkpath(dirname(path))
-    CSV.write(path, table)
+    CSV.write(path, table; dateformat = TIMESTAMP_FORMAT)
     return String(path)
 end
 
