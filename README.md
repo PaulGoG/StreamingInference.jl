@@ -1,7 +1,10 @@
 # StreamingInference.jl
 
-[![CI](https://github.com/PaulGoG/StreamingInference.jl/actions/workflows/CI.yml/badge.svg)](https://github.com/PaulGoG/StreamingInference.jl/actions/workflows/CI.yml)
-[![Docs (dev)](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/StreamingInference.jl/dev/)
+[![CI](https://github.com/PaulGoG/StreamingInference.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/PaulGoG/StreamingInference.jl/actions/workflows/CI.yml)
+[![Coverage](https://codecov.io/gh/PaulGoG/StreamingInference.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/PaulGoG/StreamingInference.jl)
+[![Documentation](https://img.shields.io/badge/docs-dev-blue.svg)](https://PaulGoG.github.io/StreamingInference.jl/dev/)
+[![Julia](https://img.shields.io/badge/julia-%E2%89%A5%201.13-9558B2)](https://julialang.org/)
+[![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Windowed analysis of a time series that arrives in batches, late, out of
@@ -12,35 +15,46 @@ estimator, and evaluates the result: thresholds, event-level metrics, alert
 latencies. The estimator is a type you supply; nothing here depends on a
 physical domain or on a particular method.
 
-I wrote this code as the domain-general layer of
+It is the base of a set of three packages. I wrote this code as the
+domain-general layer of
 [MilliHertzQML.jl](https://github.com/PaulGoG/MilliHertzQML.jl), a
 quantum classifier for gravitational-wave telemetry, and moved it into its
 own package so that other pipelines (other estimators, other kinds of
-series) can share the same streaming, provenance and evaluation code.
+series) can share the same streaming, provenance and evaluation code;
+[MilliHertzBase.jl](https://github.com/PaulGoG/MilliHertzBase.jl), the
+gravitational-wave layer, builds on it. The manual is built from `main` at
+[PaulGoG.github.io/StreamingInference.jl/dev](https://PaulGoG.github.io/StreamingInference.jl/dev/).
 
 ```
 StreamingInference.jl/
+├── activate.jl                 # activates and instantiates the package environment
 ├── src/
-│   ├── StreamingInference.jl   # Module and public names
-│   ├── estimators.jl           # Estimator interface: scorers, memory trait, gaps
-│   ├── telemetry.jl            # Run interface, coverage, scheduling, replay, alerts
-│   ├── dsp.jl                  # Periodograms, Welch PSD, whitening, high-pass
+│   ├── StreamingInference.jl   # module and public names
+│   ├── estimators.jl           # estimator interface: scorers, memory trait, gaps
+│   ├── telemetry.jl            # run interface, coverage, scheduling, replay, alerts
+│   ├── dsp.jl                  # periodograms, Welch PSD, whitening, high-pass
 │   ├── evaluation.jl           # ROC, event metrics, threshold selection
 │   ├── config.jl               # TOML configuration and the pipeline root
-│   └── provenance.jl           # Run identifiers, git and hardware provenance, digests
-├── ext/                        # CairoMakie figures
-├── test/
-└── docs/
+│   └── provenance.jl           # run identifiers, git and hardware provenance, digests
+├── ext/                        # CairoMakie extension (figures)
+├── test/                       # suite with static QA, own environment
+└── docs/                       # Documenter manual, own environment
 ```
+
+The full tree is at the end of this page.
 
 ## Installation
 
-The package is not registered; install it from this repository (Julia ≥ 1.13):
+The package requires Julia 1.13 or later and is not registered. There is
+no release yet: an environment adds it from this repository, following
+`main` or pinned to a commit with `rev`:
 
 ```julia
 using Pkg
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")
 ```
+
+The figures need `CairoMakie` in the same environment.
 
 ## Entry points
 
@@ -50,8 +64,9 @@ julia test/runtests.jl        # test suite, with Aqua, JET and ExplicitImports
 julia docs/make.jl            # manual, built into docs/build/
 ```
 
-Each environment (`.`, `test/`, `docs/`) has an `activate.jl` that
-activates and instantiates it, and every entry point includes it first.
+Each environment (the root, `test/`, `docs/`) has an `activate.jl` that
+activates and instantiates it, and every entry point includes its own
+first.
 
 ## Example
 
@@ -87,9 +102,11 @@ and the alert tables.
 
 ## Status
 
-Version 0.1.0-DEV, extracted from MilliHertzQML.jl 3.0.0-DEV with its
-history. The package is used by MilliHertzQML.jl. Known limitations,
-inherited from that origin and to be generalised:
+No release yet: version 0.1.0-DEV on `main`, which MilliHertzBase.jl and
+MilliHertzQML.jl pin by commit. The code was the domain-general layer of
+MilliHertzQML.jl until the layers were separated into packages on
+1 October 2026; the repository keeps the history of those files. Known
+limitations, inherited from that origin and to be generalised:
 
 - the event tables of `alert_latency_table` and `event_merger_times` name
   the event time `merger_time_s` (or `t_c_sec`);
@@ -99,18 +116,7 @@ inherited from that origin and to be generalised:
 - the default high-pass cutoff of `StreamingDetector` (0.5 mHz) suits the
   millihertz band of its origin; set it for other series.
 
-## How to cite
-
-`CITATION.cff` carries the metadata; in BibTeX:
-
-```bibtex
-@software{Gogita_StreamingInference_jl,
-  author = {Gogîță, Paul-Adrian},
-  title  = {{StreamingInference.jl}},
-  url    = {https://github.com/PaulGoG/StreamingInference.jl},
-  year   = {2026}
-}
-```
+## Full file tree
 
 <details>
 <summary>Full file tree</summary>
@@ -141,11 +147,33 @@ StreamingInference.jl/
 │   ├── activate.jl
 │   ├── runtests.jl             # Static QA, signal processing, evaluation, configuration, figures
 │   └── telemetry_tests.jl      # Streaming replay, reference scorers, ordered release
-└── docs/
-    ├── Project.toml            # Documentation environment (package by path)
-    ├── activate.jl
-    ├── make.jl
-    └── src/                    # Manual pages
+├── docs/
+│   ├── Project.toml            # Documentation environment (package by path)
+│   ├── activate.jl
+│   ├── make.jl
+│   └── src/                    # Manual pages
+├── .github/
+│   ├── workflows/CI.yml        # Tests on the compat floor and the current release, formatting check, coverage
+│   ├── workflows/Documentation.yml  # Manual built on every push, deployed to GitHub Pages
+│   └── dependabot.yml          # Weekly updates of the Julia and GitHub Actions dependencies
+└── codecov.yml                 # Coverage statuses informational; the commit status rests on the tests
 ```
 
 </details>
+
+## How to cite
+
+`CITATION.cff` carries the metadata; in BibTeX:
+
+```bibtex
+@software{Gogita_StreamingInference_jl,
+  author = {Gogîță, Paul-Adrian},
+  title  = {{StreamingInference.jl}},
+  url    = {https://github.com/PaulGoG/StreamingInference.jl},
+  year   = {2026}
+}
+```
+
+## License
+
+MIT; see `LICENSE`.
