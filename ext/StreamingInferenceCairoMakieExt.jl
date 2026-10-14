@@ -635,8 +635,32 @@ function figure_telemetry_alerts(
                 linewidth = 1.5,
             )
         alert_handle = nothing
+        confirmation_handle = nothing
         alert_x = Float64[]
         alert_y = Float64[]
+        confirmation_y = Float64[]
+        if latencies !== nothing && "confirmed" in names(latencies)
+            # The second tier, unlabelled: hollow markers at the confirmation
+            # time of every confirmed event
+            held = latencies[coalesce.(latencies.confirmed, false), :]
+            confirmation_x = [days_since(epoch, t) for t in held.t_confirmation]
+            confirmation_y = [
+                (c - m) / Dates.Millisecond(1) / 3.6e6 for
+                (c, m) in zip(held.t_confirmation, held.t_merger)
+            ]
+            isempty(confirmation_x) || (
+                confirmation_handle = scatter!(
+                    ax_lat,
+                    confirmation_x,
+                    confirmation_y;
+                    color = :transparent,
+                    marker = :diamond,
+                    markersize = 18,
+                    strokewidth = 2,
+                    strokecolor = FIGURE_STROKES.signal,
+                )
+            )
+        end
         if latencies !== nothing
             hits = latencies[latencies.detected .== true, :]
             alert_x = [days_since(epoch, t) for t in hits.t_alarm]
@@ -663,7 +687,7 @@ function figure_telemetry_alerts(
         hidexdecorations!(ax_score; grid = false, ticks = false)
         lo, hi = extrema(t_days)
         xlims!(ax_lat, lo, hi == lo ? lo + 1 : hi)
-        y_lo, y_hi = extrema(vcat(latency_h, alert_y))
+        y_lo, y_hi = extrema(vcat(latency_h, alert_y, confirmation_y))
         x_span = hi == lo ? 1.0 : hi - lo
         y_span = max(y_hi - y_lo, 1.0)
         alert_labels = map(alert_y) do y
@@ -717,6 +741,7 @@ function figure_telemetry_alerts(
             (threshold_handle, "Threshold $(round(threshold; digits = 3))"),
             (availability_handle, "Window availability"),
             (alert_handle, "Alert time"),
+            (confirmation_handle, "Confirmation"),
             (event_handle, event_label),
         )
             h === nothing && continue

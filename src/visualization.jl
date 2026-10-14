@@ -256,7 +256,9 @@ credited to (`label_spans`, pairs of `DateTime`, named `span_label` in the
 legend) shaded; below, the ground-availability latency of every window
 (`complete_at − content_end` [h]) with the alert latencies of the detected
 events (`latencies`, the table of `alert_latency_table`, their event times
-named `event_label`) annotated. Requires CairoMakie.
+named `event_label`) annotated, and, when the table has the confirmation
+tier, the confirmation latency of every confirmed event as a hollow marker.
+Requires CairoMakie.
 """
 function figure_telemetry_alerts end
 

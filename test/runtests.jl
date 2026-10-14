@@ -1175,6 +1175,32 @@ end
     )
     y_limits = ax_latency.limits[][2]
     @test y_limits[1] < -28 && y_limits[2] > 30
+    # The confirmation tier adds one hollow, unlabelled marker per confirmed
+    # event and a legend entry; the labels are those of the alerts
+    confirmed_rows = copy(alert_rows)
+    confirmed_rows.confirmed = [true, false, true, false]
+    confirmed_rows.t_confirmation =
+        Union{Missing,DateTime}[epoch+Hour(90), missing, epoch+Hour(450), missing]
+    confirmed_figure = figure_telemetry_alerts(
+        alert_windows,
+        0.5;
+        epoch = epoch,
+        latencies = confirmed_rows,
+    )
+    ax_confirmed = only(
+        filter(
+            a -> a isa CairoMakie.Axis && a.ylabel[] == "Latency [h]",
+            confirmed_figure.content,
+        ),
+    )
+    hollow = filter(
+        p -> p isa CairoMakie.Scatter && p.strokewidth[] == 2,
+        ax_confirmed.scene.plots,
+    )
+    @test length(hollow) == 1 && length(hollow[1][1][]) == 2
+    @test ax_confirmed.limits[][2][2] > 50
+    @test length(filter(p -> p isa CairoMakie.Text, ax_confirmed.scene.plots)) ==
+          length(filter(p -> p isa CairoMakie.Text, ax_latency.scene.plots))
     # Scores beyond the unit interval stay inside the score axis
     rms_windows = transform(alert_windows, :score => (s -> 2 .* s .+ 1) => :score)
     rms_figure = figure_telemetry_alerts(
