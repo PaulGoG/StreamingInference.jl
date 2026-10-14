@@ -403,6 +403,50 @@ struct UnimplementedScorer <: AbstractWindowScorer end
     )
     shared = alert_latency_table(forced, twin, geometry; persistence = 3)
     @test shared.alarm_window == [27, 27] && all(shared.shared_alert)
+    # The confirmation tier: windows of 1000 rows every 100 overlap tenfold,
+    # so a confirmation needs at least eleven consecutive alarmed windows.
+    # The run 25–36 in the first span raises the preliminary alert at window
+    # 27 and is confirmed at window 35; outside every span (windows 1–21 and
+    # 41–45) the run 1–11 is a false alert of both tiers, the run 41–43 of
+    # the preliminary tier only.
+    @test window_overlap(forced) == 10
+    @test window_overlap(forced[1:0, :]) == 0
+    @test !("confirmed" in names(three))
+    tiers = copy(forced)
+    tiers.decision[1:11] .= 1
+    tiers.decision[25:36] .= 1
+    tiers.decision[41:43] .= 1
+    both = alert_latency_table(
+        tiers,
+        events_table,
+        geometry;
+        persistence = 3,
+        confirmation_persistence = 11,
+    )
+    @test both.alarm_window[1] == 27 && both.confirmed == [true, false]
+    @test both.confirmation_window[1] == 35 && ismissing(both.confirmation_window[2])
+    @test both.t_confirmation[1] == tiers.complete_at[35]
+    @test both.confirmation_latency_total_h[1] == both.confirmation_latency_data_h[1] + 1.0
+    @test both.false_alarm_episodes[1] == 2 && both.false_confirmations[1] == 1
+    @test both.false_confirmations_per_30d[1] < both.false_alarms_per_30d[1]
+    @test all(both.alert_confirmation_persistence .== 11)
+    # Every column of the one-tier table is unchanged by the second tier
+    one = alert_latency_table(tiers, events_table, geometry; persistence = 3)
+    @test isequal(both[:, names(one)], one)
+    @test_throws ArgumentError alert_latency_table(
+        tiers,
+        events_table,
+        geometry;
+        persistence = 3,
+        confirmation_persistence = 3,
+    )
+    @test_throws ArgumentError alert_latency_table(
+        tiers,
+        events_table,
+        geometry;
+        persistence = 3,
+        confirmation_persistence = 10,
+    )
     # Out-of-order arrival: the run is complete only when its last-arriving
     # window lands, whichever index that is
     shuffled = copy(forced)

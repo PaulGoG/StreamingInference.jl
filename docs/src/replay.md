@@ -116,6 +116,19 @@ the arrival that completes it; it is credited to an event when it
 overlaps the event's credited span, and every other alert counts as a
 false-alarm episode.
 
+Windows of ``W`` samples advanced by ``S`` overlap: every sample lies in
+``κ = W/S`` consecutive windows ([`window_overlap`](@ref)), so a transient
+shorter than a step can alarm ``κ`` consecutive windows and raise an alert
+at any persistence up to ``κ``. A persistence above ``κ`` requires alarms
+on windows that share no sample, at the price of ``(p - 1) S`` of waiting
+after the first alarmed window. The table therefore offers a second tier:
+with `confirmation_persistence` above ``κ`` an alert is confirmed by the
+arrival that completes that many consecutive alarmed windows touching the
+span, and confirmations are counted and timed beside the alerts
+(`confirmed`, `t_confirmation`, `confirmation_latency_data_h`,
+`false_confirmations_per_30d`). The preliminary alert keeps its latency;
+the confirmation rests on the duration of the excess.
+
 ## Pipeline root and provenance
 
 Relative paths of a configuration resolve against the pipeline root

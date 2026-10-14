@@ -7,6 +7,13 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- A confirmation tier of the alert table: `alert_latency_table(...;
+  confirmation_persistence)` confirms an alert by the arrival that
+  completes that many consecutive alarmed windows touching the credited
+  span and counts the confirmations outside every span; the value must
+  exceed the window overlap `window_overlap(windows)` (window length over
+  step), so that a confirmed alert rests on alarms of windows sharing no
+  sample. With the default 0 the table is unchanged.
 - First release as a package of its own. The code was the domain-general
   layer of MilliHertzQML.jl (3.0.0-DEV) and keeps its history from the
   commit that separated the layers: the estimator interface and stateful

@@ -1857,7 +1857,8 @@ end
 
 """
     alert_latency_table(windows, events, geometry; processing_latency_hours = 1.0,
-                        persistence = 1, crediting = :signal) -> DataFrame
+                        persistence = 1, crediting = :signal,
+                        confirmation_persistence = 0) -> DataFrame
 
 Per event of `events` (columns `merger_time_s` [s after the mission epoch]
 and, when present, `label_start_index`/`label_end_index` payload rows; a
@@ -1891,6 +1892,20 @@ alarmed windows outside every label span that reach `persistence` are
 false-alarm episodes, reported as `false_alarms_per_30d` in every row;
 shorter runs raise no alert and are not counted. `alert_persistence`
 and `alert_crediting` record the criteria.
+
+A window of ``W`` samples advanced by ``S`` puts every sample in
+``κ = W/S`` consecutive windows ([`window_overlap`](@ref)), so a transient
+shorter than a step can alarm ``κ`` consecutive windows and pass any
+persistence up to ``κ``. With `confirmation_persistence > 0` the table adds
+a second tier: the alert is confirmed by the arrival that completes
+`confirmation_persistence` consecutive alarmed windows touching the span,
+which must exceed ``κ`` so that a confirmed alert rests on alarms of
+windows sharing no sample. The columns `confirmed`,
+`confirmation_window`, `t_confirmation`, `confirmation_latency_data_h`,
+`confirmation_latency_total_h`, `false_confirmations`,
+`false_confirmations_per_30d` (runs outside every span that reach it) and
+`alert_confirmation_persistence` are appended; with the default 0 the
+table has none of them.
 """
 function alert_latency_table(
     windows::DataFrame,
@@ -1899,12 +1914,29 @@ function alert_latency_table(
     processing_latency_hours::Real = 1.0,
     persistence::Integer = 1,
     crediting::Symbol = :signal,
+    confirmation_persistence::Integer = 0,
 )
     processing_latency_hours >= 0 ||
         throw(ArgumentError("processing_latency_hours must be non-negative."))
     persistence >= 1 || throw(ArgumentError("persistence must be at least 1."))
     crediting in (:signal, :label) ||
         throw(ArgumentError("crediting = :$crediting; one of :signal, :label."))
+    if confirmation_persistence != 0
+        confirmation_persistence > persistence || throw(
+            ArgumentError(
+                "confirmation_persistence = $confirmation_persistence must exceed " *
+                "persistence = $persistence (or be 0, no confirmation).",
+            ),
+        )
+        κ = window_overlap(windows)
+        confirmation_persistence > κ || throw(
+            ArgumentError(
+                "confirmation_persistence = $confirmation_persistence does not exceed " *
+                "the window overlap κ = $κ: a run of that length can lie on the data " *
+                "of a single window.",
+            ),
+        )
+    end
     times = event_merger_times(events)
     n_events = nrow(events)
     starts = credited_span_starts(events, crediting)
@@ -1936,6 +1968,10 @@ function alert_latency_table(
         first(r) <= last(span) && first(span) <= last(r)
     end
     in_span = falses(length(alarmed))
+    hits_of = [Set(j for j in eachindex(alarmed) if overlaps(j, span)) for span in spans]
+    for hits in hits_of, j in hits
+        in_span[j] = true
+    end
     out = DataFrame(
         label = String[],
         merger_time_s = Float64[],
@@ -1947,31 +1983,11 @@ function alert_latency_table(
         latency_total_h = Union{Missing,Float64}[],
         inference_wall_ms = Union{Missing,Float64}[],
     )
+    t_mergers =
+        [geometry.start_sim_time + Dates.Millisecond(round(Int, 1000 * t)) for t in times]
     for i in 1:n_events
-        span = spans[i]
-        t_merger = geometry.start_sim_time + Dates.Millisecond(round(Int, 1000 * times[i]))
-        hits = Set(j for j in eachindex(alarmed) if overlaps(j, span))
-        for j in hits
-            in_span[j] = true
-        end
-        best_t = nothing
-        best_w = 0
-        for r in runs
-            length(r) >= persistence || continue
-            for a in first(r):(last(r)-persistence+1)
-                sub = a:(a+persistence-1)
-                any(in(hits), sub) || continue
-                # The arrival completing the run; among windows completed by
-                # the same arrival, the latest in mission time
-                ts = [scored[alarmed[j]] for j in sub]
-                t = maximum(ts)
-                k = sub[findlast(==(t), ts)]
-                if best_t === nothing || t < best_t
-                    best_t = t
-                    best_w = alarmed[k]
-                end
-            end
-        end
+        t_merger = t_mergers[i]
+        best_t, best_w = earliest_alert(runs, alarmed, scored, hits_of[i], persistence)
         if best_t === nothing
             push!(
                 out,
@@ -2021,7 +2037,76 @@ function alert_latency_table(
         fill(observation_days == 0 ? NaN : n_false / observation_days * 30, n_events)
     out.alert_persistence = fill(Int(persistence), n_events)
     out.alert_crediting = fill(String(crediting), n_events)
+    confirmation_persistence == 0 && return out
+    confirmed = [
+        earliest_alert(runs, alarmed, scored, hits, confirmation_persistence) for
+        hits in hits_of
+    ]
+    out.confirmed = [t !== nothing for (t, _) in confirmed]
+    out.confirmation_window = Union{Missing,Int}[
+        t === nothing ? missing : Int(windows.window[w]) for (t, w) in confirmed
+    ]
+    out.t_confirmation =
+        Union{Missing,Dates.DateTime}[t === nothing ? missing : t for (t, _) in confirmed]
+    out.confirmation_latency_data_h = Union{Missing,Float64}[
+        t === nothing ? missing : (t - t_mergers[i]) / Dates.Millisecond(1) / 3.6e6 for
+        (i, (t, _)) in enumerate(confirmed)
+    ]
+    out.confirmation_latency_total_h =
+        out.confirmation_latency_data_h .+ processing_latency_hours
+    n_false_confirmed =
+        count(r -> length(r) >= confirmation_persistence, alarm_runs(outside))
+    out.false_confirmations = fill(n_false_confirmed, n_events)
+    out.false_confirmations_per_30d = fill(
+        observation_days == 0 ? NaN : n_false_confirmed / observation_days * 30,
+        n_events,
+    )
+    out.alert_confirmation_persistence = fill(Int(confirmation_persistence), n_events)
     return out
+end
+
+"""
+    earliest_alert(runs, alarmed, scored, hits, p) -> (t, k)
+
+The earliest arrival completing `p` consecutive alarmed windows of which
+one is in `hits`, and the row of the window of that arrival; among windows
+completed by the same arrival, the latest in mission time. `runs` are
+position ranges into `alarmed` (rows of alarmed windows in window order),
+`scored` the scoring instants of every row, `hits` positions into
+`alarmed`. `(nothing, 0)` when no run qualifies.
+"""
+function earliest_alert(runs, alarmed, scored, hits, p::Integer)
+    best_t = nothing
+    best_w = 0
+    for r in runs
+        length(r) >= p || continue
+        for a in first(r):(last(r)-p+1)
+            sub = a:(a+p-1)
+            any(in(hits), sub) || continue
+            ts = [scored[alarmed[j]] for j in sub]
+            t = maximum(ts)
+            k = sub[findlast(==(t), ts)]
+            if best_t === nothing || t < best_t
+                best_t = t
+                best_w = alarmed[k]
+            end
+        end
+    end
+    return best_t, best_w
+end
+
+"""
+    window_overlap(windows) -> Int
+
+Number of consecutive windows that contain any one sample of a replay
+table: the window length over the step ([`detector_step`](@ref)), rounded
+down; 0 for an empty table. Two windows whose indices differ by at least
+this number share no sample.
+"""
+function window_overlap(windows::DataFrame)
+    nrow(windows) == 0 && return 0
+    len = Int(windows.row_end[1] - windows.row_start[1] + 1)
+    return len ÷ detector_step(windows)
 end
 
 """

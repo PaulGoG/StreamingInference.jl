@@ -57,7 +57,7 @@ export newly_evaluable!, StreamingDetector, score_window, TrailingWelch
 export AbstractWindowEstimator, AbstractWindowScorer, EstimatorMemory, Stateless, Stateful
 export estimator_memory, window_score, score_label, score_bounds, FeatureMap
 export condition_window, ReplayState, process_event!, windows_table, replay_run
-export follow_run, alert_latency_table, event_merger_times
+export follow_run, alert_latency_table, event_merger_times, window_overlap
 export reset_estimator!, GapEvent, estimator_gap!, PendingWindow, OrderedCommit
 export finalize_replay!, gaps_table, replay_state
 export content_digest, parameter_digest, product_table, recorded_channels
