@@ -55,7 +55,8 @@ follow [Semantic Versioning](https://semver.org/).
   refusal of a payload row 1 away from the mission epoch. `columns` selects
   the payload columns of a run that carries several under one link
   accounting: the only column by default, one by name as a vector, several
-  by name as the channels of a matrix. The rows of a batch follow the
+  by name as the channels of a matrix; `telemetry_run_columns` names the
+  columns a run carries. The rows of a batch follow the
   payload row the producer stamps (2.1.0 and later), checked against its
   content epoch, and its content epoch for earlier producers. This
   adapter was the DeepSpaceTelemetry extension of MilliHertzBase.jl, built

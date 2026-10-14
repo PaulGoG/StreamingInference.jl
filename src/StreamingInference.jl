@@ -49,6 +49,7 @@ export parse_batch_name, batch_rows, row_time, time_row, event_symbol
 export AbstractTelemetryRun, run_geometry, list_batches, read_batch, arrival_events
 export run_state, MemoryTelemetryRun, ScheduledRecordRun, Coverage, add!, remove!
 export record_final, declared_holes, batch_records, run_descriptor, open_telemetry_run
+export telemetry_run_columns
 export DeclaredHole, HOLE_CAUSES, hole_cause, process_hole!, GAP_CAUSES
 export covered_fraction, holes
 export covered_stretch, WindowScheduler, window_rows, conditioning_rows, windows_touching

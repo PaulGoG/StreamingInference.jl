@@ -24,6 +24,7 @@ using StreamingInference:
     hole_cause
 import StreamingInference:
     open_telemetry_run,
+    telemetry_run_columns,
     run_geometry,
     list_batches,
     batch_records,
@@ -185,6 +186,13 @@ function open_telemetry_run(
         producer_at_least(version, v"2.1.0"),
         producer_at_least(version, v"2.6.0"),
     )
+end
+
+# The names only: no version floor, since nothing of the run is served
+function telemetry_run_columns(run_dir::AbstractString)
+    isdir(run_dir) || throw(ArgumentError("run directory not found: $run_dir"))
+    handle = RunAdapter.open_run(String(run_dir); minimum_version = v"0.0.0-")
+    return copy(RunAdapter.run_geometry(handle).columns)
 end
 
 run_geometry(run::DeepSpaceTelemetryRun) = run.geometry

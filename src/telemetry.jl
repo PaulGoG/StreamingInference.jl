@@ -320,6 +320,16 @@ serves those columns, in that order, as the channels of a matrix.
 function open_telemetry_run end
 
 """
+    telemetry_run_columns(run_dir) -> Vector{String}
+
+The names of the payload columns the DeepSpaceTelemetry run at `run_dir`
+carries, from which [`open_telemetry_run`](@ref) selects (`columns`).
+Implemented by the package extension that loads with DeepSpaceTelemetry
+2.6 or later.
+"""
+function telemetry_run_columns end
+
+"""
     MemoryTelemetryRun(geometry, payload, events; lost = String[], holes = DeclaredHole[])
 
 In-memory run used by the tests: the whole `payload`, an arrival feed

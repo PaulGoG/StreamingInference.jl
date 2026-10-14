@@ -31,7 +31,8 @@ misplace the payload after it), and a run whose payload row 1 does not lie
 at the mission epoch. A run carries one or several named payload columns
 under one link accounting; `columns` selects them: the only column by
 default, one column by name as a vector, or several names as the channels
-of a matrix, in the order given. The holes are those of the producer's
+of a matrix, in the order given; [`telemetry_run_columns`](@ref) names
+the columns a run carries. The holes are those of the producer's
 declared-hole feed from 2.6.0 on, and before it the generation gaps its
 event logs declare, each known from the end of the gap; the run
 descriptor is its `descriptor.toml`.

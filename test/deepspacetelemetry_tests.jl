@@ -175,6 +175,9 @@ end
         CSV.write(pair_path, DataFrame(A = Float32.(payload), E = Float32.(second)))
         pair_dir = tick_mission(dir, "pair", pair_path; epoch = epoch, columns = ["A", "E"])
         @test_throws ArgumentError open_telemetry_run(pair_dir)
+        @test telemetry_run_columns(pair_dir) == ["A", "E"]
+        @test telemetry_run_columns(run_dir) == ["Amplitude"]
+        @test_throws ArgumentError telemetry_run_columns(joinpath(dir, "absent"))
         @test_throws ArgumentError open_telemetry_run(pair_dir; columns = ["A", "A"])
         @test_throws ArgumentError open_telemetry_run(pair_dir; columns = ["A", "T"])
         pair_run = open_telemetry_run(pair_dir; columns = ["A", "E"])
