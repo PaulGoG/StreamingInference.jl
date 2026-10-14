@@ -107,6 +107,11 @@ end
         descriptor = run_descriptor(run)
         @test descriptor["schema"] == "deepspacetelemetry-run/1"
         @test descriptor["mode"] == "tick" && descriptor["run_id"] == "coupling"
+        # The identity of the producer's code (2.6.1 and later), recorded also
+        # for a copy installed by commit, as this environment pins it
+        @test occursin(r"^[0-9a-f]{40}$", descriptor["git_commit"])
+        @test occursin(r"^[0-9a-f]{40}$", descriptor["git_tree_sha1"])
+        @test descriptor["git_dirty"] == false
         batches = list_batches(run)
         @test !isempty(batches) && issorted([b.index for b in batches])
         delivered = filter(b -> b.state == :ground, batches)
