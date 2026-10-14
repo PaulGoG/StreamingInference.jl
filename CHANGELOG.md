@@ -47,6 +47,38 @@ follow [Semantic Versioning](https://semver.org/).
   a product (`stretches` in its sidecar); `contiguous_runs` and
   `event_metrics` take those indices (`windows`) and end events and
   false-alarm episodes at a gap instead of running across it.
+- A DeepSpaceTelemetry extension (DeepSpaceTelemetry 2.6 or later):
+  `open_telemetry_run` opens a producer run directory through the
+  producer's reference run adapter, `RunAdapter`, with the version floor
+  `producer_compat`, the refusal of external-payload runs of producers up
+  to 2.0.1 that hold a generation gap or an emitter restart, and the
+  refusal of a payload row 1 away from the mission epoch. `columns` selects
+  the payload columns of a run that carries several under one link
+  accounting: the only column by default, one by name as a vector, several
+  by name as the channels of a matrix. The rows of a batch follow the
+  payload row the producer stamps (2.1.0 and later), checked against its
+  content epoch, and its content epoch for earlier producers. This
+  adapter was the DeepSpaceTelemetry extension of MilliHertzBase.jl, built
+  on the producer's internal readers; nothing in it was specific to
+  gravitational waves.
+- Holes declared by the producer: `DeclaredHole` (cause, batch, rows,
+  declaration instant; `HOLE_CAUSES`, `hole_cause`) and the run interface
+  function `declared_holes(run; after)`, empty by default; the extension
+  reads the producer's declared-hole feed (`holes.csv`, 2.6.0 and later)
+  and, for earlier producers, the generation gaps of its event logs. A
+  replay consumes arrivals and declarations in mission-time order
+  (`process_hole!`): the rows of a declared hole become a permanent hole
+  from its declaration, widened by `tdi_gap_dilation_sec` like a lost
+  batch, and a stateful estimator is told of the windows it settles at
+  once, with the producer's cause (`GapEvent` causes `:scheduled`,
+  `:recorder`, `:stream`, `:not_generated`, `:other`; `GAP_CAUSES`),
+  instead of `:undelivered` at the end of the record.
+- `record_final(run)`: whether the arrival feed and the declared holes are
+  final, by default once the run is no longer active; the extension
+  reports a run final while the producer post-processes.
+  `batch_records(run, names)` resolves named batches, by default from one
+  listing; `run_descriptor(run)` returns the producer's identity of the
+  run (`descriptor.toml` in the extension), empty by default.
 
 ### Changed (relative to the layer inside MilliHertzQML.jl)
 - The score figures no longer assume a classifier probability: `figure_roc`
@@ -62,6 +94,20 @@ follow [Semantic Versioning](https://semver.org/).
   `ArgumentError` naming a scorer type without a method.
 
 ### Changed
+- `follow_run` polls the declared holes beside the arrival feed, resolves
+  only the batches its fresh arrivals name (`batch_records`) instead of
+  listing the run on every poll, polls again at once while the feeds
+  deliver, and stops once the record is final (`record_final`) and both
+  feeds are drained, rather than when the run leaves the active state:
+  a live replay now ends when the data end, not when the producer has
+  finished its figures.
+- `ScheduledRecordRun` resolves a batch its schedule delivers after the
+  run was wrapped, so that it serves a followed run.
+- Replays of runs whose producer declares generation gaps change at the
+  edges of those gaps: the declared rows are widened by the erosion, so
+  the window whose conditioning stretch begins within `tdi_gap_dilation_sec`
+  after a gap is no longer scored. Runs without declared holes replay
+  unchanged.
 - `write_csv` writes every `DateTime` column in one stated form,
   `TIMESTAMP_FORMAT` (`yyyy-mm-ddTHH:MM:SS.s`), the form CSV.jl 0.10 wrote
   by default and the products carry; CSV.jl 1.x, which DeepSpaceTelemetry

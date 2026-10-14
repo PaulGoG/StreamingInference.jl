@@ -716,7 +716,7 @@ end
     @test windows_table(state_mixed).window == 36:n_windows && state_mixed.commit.late == 5
 
     @test_throws ArgumentError GapEvent(3, 2, :lost, epoch)
-    @test_throws ArgumentError GapEvent(1, 2, :other, epoch)
+    @test_throws ArgumentError GapEvent(1, 2, :unknown, epoch)
     @test_throws ArgumentError OrderedCommit(10; late_policy = :other)
     @test_throws ArgumentError OrderedCommit(10; order_horizon = Dates.Hour(0))
 end

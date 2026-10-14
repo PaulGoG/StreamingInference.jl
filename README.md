@@ -36,7 +36,7 @@ StreamingInference.jl/
 │   ├── evaluation.jl           # ROC, event metrics, threshold selection
 │   ├── config.jl               # TOML configuration and the pipeline root
 │   └── provenance.jl           # run identifiers, git and hardware provenance, digests
-├── ext/                        # CairoMakie extension (figures)
+├── ext/                        # CairoMakie (figures) and DeepSpaceTelemetry (producer runs) extensions
 ├── test/                       # suite with static QA, own environment
 └── docs/                       # Documenter manual, own environment
 ```
@@ -54,7 +54,10 @@ using Pkg
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")
 ```
 
-The figures need `CairoMakie` in the same environment.
+The figures need `CairoMakie` in the same environment. Runs of the
+[DeepSpaceTelemetry](https://github.com/PaulGoG/DeepSpaceTelemetry.jl)
+producer open with `open_telemetry_run` once DeepSpaceTelemetry 2.6 or
+later is loaded beside this package.
 
 ## Entry points
 
@@ -141,12 +144,15 @@ StreamingInference.jl/
 │   ├── visualization.jl        # Figure interface and the shared figure toolkit
 │   └── telemetry.jl            # Run interface, coverage, scheduler, detector, replay, alert tables
 ├── ext/
-│   └── StreamingInferenceCairoMakieExt.jl  # Theme, exports, evaluation, score and replay figures
+│   ├── StreamingInferenceCairoMakieExt.jl  # Theme, exports, evaluation, score and replay figures
+│   └── StreamingInferenceDeepSpaceTelemetryExt.jl  # Producer runs through its reference run adapter
 ├── test/
-│   ├── Project.toml            # Test environment (package by path)
+│   ├── Project.toml            # Test environment (package by path, DeepSpaceTelemetry by commit)
 │   ├── activate.jl
 │   ├── runtests.jl             # Static QA, signal processing, evaluation, configuration, figures
-│   └── telemetry_tests.jl      # Streaming replay, reference scorers, ordered release
+│   ├── telemetry_tests.jl      # Streaming replay, reference scorers, ordered release
+│   ├── hole_tests.jl           # Holes declared by the producer
+│   └── deepspacetelemetry_tests.jl  # Producer missions on the tick clock, derived run directories
 ├── docs/
 │   ├── Project.toml            # Documentation environment (package by path)
 │   ├── activate.jl

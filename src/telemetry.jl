@@ -155,6 +155,62 @@ function event_symbol(value::AbstractString)
     return :other
 end
 
+"""
+    HOLE_CAUSES
+
+The causes of a declared hole: a batch `:lost` in transfer or `:pruned`
+after delivery, rows never produced because the producer's stream restarted
+(`:stream`), a gap was scheduled (`:scheduled`) or its recorder was full
+(`:recorder`), and, once the record has ended, rows produced but not
+delivered (`:undelivered`) or never reached (`:not_generated`). `:other`
+stands for a cause unknown to this version.
+"""
+const HOLE_CAUSES =
+    (:lost, :pruned, :stream, :scheduled, :recorder, :undelivered, :not_generated, :other)
+
+"""
+    hole_cause(value) -> Symbol
+
+The cause in [`HOLE_CAUSES`](@ref) named by `value` (case-insensitive),
+`:other` for a name unknown to this version.
+"""
+function hole_cause(value::Union{AbstractString,Symbol})
+    v = Symbol(lowercase(strip(String(value))))
+    return v in HOLE_CAUSES ? v : :other
+end
+
+"""
+    DeclaredHole(cause, batch, rows, declared_at)
+
+A hole of the delivered record as the producer declares it: its `cause`
+([`HOLE_CAUSES`](@ref)), the `batch` it concerns (`nothing` for rows no
+batch holds), the payload `rows` that will never be delivered, and
+`declared_at`, the mission time from which the consumer knows it.
+"""
+struct DeclaredHole
+    cause::Symbol
+    batch::Union{String,Nothing}
+    rows::UnitRange{Int}
+    declared_at::Dates.DateTime
+    function DeclaredHole(
+        cause::Symbol,
+        batch::Union{AbstractString,Nothing},
+        rows::AbstractUnitRange{<:Integer},
+        declared_at::Dates.DateTime,
+    )
+        cause in HOLE_CAUSES ||
+            throw(ArgumentError("hole cause $cause; expected one of $(HOLE_CAUSES)."))
+        (isempty(rows) || first(rows) >= 1) ||
+            throw(ArgumentError("hole rows $rows; rows are 1-based."))
+        return new(
+            cause,
+            batch === nothing ? nothing : String(batch),
+            UnitRange{Int}(rows),
+            declared_at,
+        )
+    end
+end
+
 # --- Run interface -----------------------------------------------------
 
 """
@@ -162,8 +218,10 @@ end
 
 A producer run as seen by the consumer. An adapter implements
 [`run_geometry`](@ref), [`list_batches`](@ref), [`read_batch`](@ref),
-[`arrival_events`](@ref), and [`run_state`](@ref); the consumer never writes
-into the run.
+[`arrival_events`](@ref), and [`run_state`](@ref), and may implement
+[`record_final`](@ref), [`declared_holes`](@ref), [`batch_records`](@ref),
+and [`run_descriptor`](@ref), whose defaults serve a producer that declares
+nothing beyond its arrival feed; the consumer never writes into the run.
 """
 abstract type AbstractTelemetryRun end
 
@@ -206,23 +264,82 @@ function arrival_events end
 function run_state end
 
 """
-    MemoryTelemetryRun(geometry, payload, events; lost = String[])
+    record_final(run) -> Bool
+
+Whether the arrival feed and the declared holes of `run` are final, so
+that a live consumer can stop polling once it has drained them. By default
+a run is final when it is no longer `:active`; a producer that ends its
+record before it has written every derived product says so earlier.
+"""
+record_final(run::AbstractTelemetryRun) = run_state(run) != :active
+
+"""
+    declared_holes(run; after = 0) -> Vector{DeclaredHole}
+
+The holes of the delivered record that the producer has declared
+([`DeclaredHole`](@ref)), in the order of its declarations, beyond the
+first `after`; a live consumer passes the number it has consumed. A replay
+excludes the rows of a hole from the moment of its declaration, as it
+excludes a lost batch. Empty for a producer that declares none.
+"""
+declared_holes(::AbstractTelemetryRun; after::Integer = 0) = DeclaredHole[]
+
+"""
+    batch_records(run, names) -> Vector{BatchRecord}
+
+The records of the batches `names` that the run knows, so that a live
+consumer resolves the batches its fresh arrivals name rather than listing
+the run again. By default taken from one [`list_batches`](@ref).
+"""
+function batch_records(run::AbstractTelemetryRun, names)
+    wanted = Set(String.(names))
+    return filter(b -> b.name in wanted, list_batches(run))
+end
+
+"""
+    run_descriptor(run) -> Dict{String,Any}
+
+The producer's own identity of the run — its run identifier, the
+producer's version and commit, the digest of its configuration, its clock
+— as the producer records it, for a replay to copy into its snapshot.
+Empty for a producer that records none.
+"""
+run_descriptor(::AbstractTelemetryRun) = Dict{String,Any}()
+
+"""
+    open_telemetry_run(run_dir; producer_compat = "1.0", columns = nothing) -> AbstractTelemetryRun
+
+Open a DeepSpaceTelemetry run directory read-only through the producer's
+reference run adapter. Implemented by the package extension that loads
+with DeepSpaceTelemetry 2.6 or later; `producer_compat` is the oldest
+producer version accepted. A run carries one or several named payload
+columns: `columns = nothing` serves the only one and refuses a run with
+several, a name serves that column as a vector, and a vector of names
+serves those columns, in that order, as the channels of a matrix.
+"""
+function open_telemetry_run end
+
+"""
+    MemoryTelemetryRun(geometry, payload, events; lost = String[], holes = DeclaredHole[])
 
 In-memory run used by the tests: the whole `payload`, an arrival feed
-`events`, and the names of batches declared lost. Batch `k` holds payload
-rows [`batch_rows`](@ref)`(k, P)`; every batch of the payload exists. A
-matrix `payload` holds several synchronous channels, one per column.
+`events`, the names of batches declared lost, and the holes the producer
+declares ([`declared_holes`](@ref)). Batch `k` holds payload rows
+[`batch_rows`](@ref)`(k, P)`; every batch of the payload exists. A matrix
+`payload` holds several synchronous channels, one per column.
 """
 struct MemoryTelemetryRun <: AbstractTelemetryRun
     geometry::RunGeometry
     payload::Union{Vector{Float32},Matrix{Float32}}
     events::Vector{ArrivalEvent}
     lost::Set{String}
+    holes::Vector{DeclaredHole}
     function MemoryTelemetryRun(
         geometry::RunGeometry,
         payload::AbstractVecOrMat{<:Real},
         events::AbstractVector{ArrivalEvent};
         lost = String[],
+        holes::AbstractVector{DeclaredHole} = DeclaredHole[],
     )
         size(payload, 1) >= geometry.points_per_batch ||
             throw(ArgumentError("the payload holds fewer samples than one batch."))
@@ -234,11 +351,20 @@ struct MemoryTelemetryRun <: AbstractTelemetryRun
             geometry.package_version;
             payload_rows = size(payload, 1),
         )
-        return new(bounded, Array{Float32}(payload), collect(events), Set(String.(lost)))
+        return new(
+            bounded,
+            Array{Float32}(payload),
+            collect(events),
+            Set(String.(lost)),
+            collect(holes),
+        )
     end
 end
 
 run_geometry(run::MemoryTelemetryRun) = run.geometry
+
+declared_holes(run::MemoryTelemetryRun; after::Integer = 0) =
+    run.holes[(max(after, 0)+1):end]
 
 function list_batches(run::MemoryTelemetryRun)
     P = run.geometry.points_per_batch
@@ -304,8 +430,19 @@ run_geometry(run::ScheduledRecordRun) = run_geometry(run.schedule)
 list_batches(run::ScheduledRecordRun) = list_batches(run.schedule)
 arrival_events(run::ScheduledRecordRun) = arrival_events(run.schedule)
 run_state(run::ScheduledRecordRun) = run_state(run.schedule)
+record_final(run::ScheduledRecordRun) = record_final(run.schedule)
+declared_holes(run::ScheduledRecordRun; after::Integer = 0) =
+    declared_holes(run.schedule; after = after)
+batch_records(run::ScheduledRecordRun, names) = batch_records(run.schedule, names)
+run_descriptor(run::ScheduledRecordRun) = run_descriptor(run.schedule)
 
 function read_batch(run::ScheduledRecordRun, name::AbstractString)
+    # A live schedule delivers batches it did not list at construction
+    if !haskey(run.rows, name)
+        for b in batch_records(run.schedule, (name,))
+            run.rows[b.name] = UnitRange{Int}(b.rows)
+        end
+    end
     haskey(run.rows, name) ||
         throw(ArgumentError("batch $name is not a batch of the scheduling run."))
     rows = run.rows[name]
@@ -818,7 +955,8 @@ the last window of the record, 0 when its length is unknown.
 
 A window can never be scored when its own rows, or more of its
 conditioning stretch than the coverage bound admits, fell in a lost or
-pruned batch (`:lost`). Without further bound a missing window holds back
+pruned batch (`:lost`) or in a hole the producer declared (its cause,
+[`DeclaredHole`](@ref)). Without further bound a missing window holds back
 every later one until the end of the record, where the windows still
 missing are declared `:undelivered`. `order_horizon`, a time period,
 bounds that wait: when a later window has been held for longer than it,
@@ -925,14 +1063,17 @@ end
 
 Consumer state of a replay: the batches of the run, the [`Coverage`](@ref)
 of delivered rows, the [`WindowScheduler`](@ref), the delivered payload
-per batch, the scored windows, the number of arrival events consumed,
+per batch, the scored windows, the permanent holes (lost or pruned batches
+and the holes the producer declared, each widened by the erosion of
+`tdi_gap_dilation_sec` on either side) with their causes, the numbers of
+arrival events and declared holes consumed,
 under `trailing_psd::`[`TrailingWelch`](@ref) the current causal PSD
 estimate with the last delivered row it was made on, and, when the
 detector's scorer is [`Stateful`](@ref), the [`OrderedCommit`](@ref) that
 releases its windows in content order (`order_horizon`, `late_policy`);
 the scorer is reset ([`reset_estimator!`](@ref)) on construction. Fed one
-event at a time by [`process_event!`](@ref) and closed by
-[`finalize_replay!`](@ref).
+event at a time by [`process_event!`](@ref), one declared hole at a time by
+[`process_hole!`](@ref), and closed by [`finalize_replay!`](@ref).
 """
 mutable struct ReplayState
     geometry::RunGeometry
@@ -947,9 +1088,12 @@ mutable struct ReplayState
     payload::Dict{Int,Union{Vector{Float32},Matrix{Float32}}}
     starts::Vector{Int}
     windows::Vector{WindowRecord}
+    # Permanent holes with the erosion on each side, and the cause of each
     excluded::Vector{UnitRange{Int}}
+    excluded_causes::Vector{Symbol}
     erosion::Int
     consumed::Int
+    holes_consumed::Int
     trailing::Union{Nothing,TrailingWelch}
     trailing_psd::Any
     trailing_row::Int
@@ -1001,7 +1145,9 @@ mutable struct ReplayState
             Int[],
             WindowRecord[],
             UnitRange{Int}[],
+            Symbol[],
             round(Int, tdi_gap_dilation_sec * geometry.sample_rate),
+            0,
             0,
             trailing_psd,
             nothing,
@@ -1218,10 +1364,7 @@ function process_event!(
             on_window === nothing || on_window(record)
         end
     elseif event.event in (:lost, :pruned)
-        lo = max(1, first(batch.rows) - state.erosion)
-        hi = last(batch.rows) + state.erosion
-        push!(state.excluded, lo:hi)
-        remove!(state.coverage, lo:hi)
+        exclude!(state, batch.rows, :lost)
         start = first(batch.rows)
         if haskey(state.payload, start)
             delete!(state.payload, start)
@@ -1229,6 +1372,43 @@ function process_event!(
         end
     end
     state.commit === nothing || release_windows!(state, event.sim_time, scored, on_window)
+    return scored
+end
+
+"""
+    exclude!(state, rows, cause)
+
+Make `rows`, widened by the erosion on each side, a permanent hole of the
+replay with `cause`: removed from the coverage now and after every later
+arrival.
+"""
+function exclude!(state::ReplayState, rows::UnitRange{Int}, cause::Symbol)
+    lo = max(1, first(rows) - state.erosion)
+    hi = last(rows) + state.erosion
+    push!(state.excluded, lo:hi)
+    push!(state.excluded_causes, cause)
+    remove!(state.coverage, lo:hi)
+    return nothing
+end
+
+"""
+    process_hole!(state, hole::DeclaredHole; on_window = nothing) -> Vector{WindowRecord}
+
+Consume one hole the producer declared ([`declared_holes`](@ref)): its rows
+become a permanent hole of the replay with its cause, exactly as a lost
+batch does, from the hole's declaration on. A lost or pruned batch is
+excluded by its arrival event and its declaration is only counted. For a
+[`Stateful`](@ref) scorer the windows the hole settles are declared at
+once with the producer's cause instead of waiting for the end of the
+record. Returns the windows scored (released) by this declaration;
+`on_window(record)` is called for each.
+"""
+function process_hole!(state::ReplayState, hole::DeclaredHole; on_window = nothing)
+    state.holes_consumed += 1
+    scored = WindowRecord[]
+    (hole.cause in (:lost, :pruned) || isempty(hole.rows)) && return scored
+    exclude!(state, hole.rows, hole.cause)
+    state.commit === nothing || release_windows!(state, hole.declared_at, scored, on_window)
     return scored
 end
 
@@ -1276,25 +1456,41 @@ function hold_window!(
 end
 
 """
-    window_lost(state, m) -> Bool
+    window_loss(state, m) -> Union{Symbol,Nothing}
 
-Whether window `m` can never become evaluable: its own rows, or more of
-its conditioning stretch than the scheduler's `min_coverage` admits, lie
-in the permanent holes of lost or pruned batches.
+The cause by which window `m` can never become evaluable — its own rows,
+or more of its conditioning stretch than the scheduler's `min_coverage`
+admits, lie in the permanent holes of the replay — or `nothing`. The cause
+is that of the first hole excluded that the window meets: `:lost` for a
+lost or pruned batch, the producer's cause for a declared hole.
 """
-function window_lost(state::ReplayState, m::Integer)
-    isempty(state.excluded) && return false
+function window_loss(state::ReplayState, m::Integer)
+    isempty(state.excluded) && return nothing
     window = window_rows(state.scheduler, m)
-    any(hole -> !isempty(intersect(hole, window)), state.excluded) && return true
+    for (hole, cause) in zip(state.excluded, state.excluded_causes)
+        isempty(intersect(hole, window)) || return cause
+    end
     stretch = conditioning_rows(state.scheduler, m)
     lost = Coverage()
-    for hole in state.excluded
+    cause = nothing
+    for (hole, c) in zip(state.excluded, state.excluded_causes)
         part = intersect(hole, stretch)
-        isempty(part) || add!(lost, part)
+        isempty(part) && continue
+        add!(lost, part)
+        cause === nothing && (cause = c)
     end
+    cause === nothing && return nothing
     n_lost = round(Int, covered_fraction(lost, stretch) * length(stretch))
-    return (length(stretch) - n_lost) / length(stretch) < state.scheduler.min_coverage
+    return (length(stretch) - n_lost) / length(stretch) < state.scheduler.min_coverage ?
+           cause : nothing
 end
+
+"""
+    window_lost(state, m) -> Bool
+
+Whether window `m` can never become evaluable ([`window_loss`](@ref)).
+"""
+window_lost(state::ReplayState, m::Integer) = window_loss(state, m) !== nothing
 
 """
     declare_gap!(state, gap::GapEvent)
@@ -1313,8 +1509,8 @@ end
     declare_gaps!(state, first_window, last_window, cause)
 
 Declare the windows `first_window:last_window` as gaps: runs of windows
-that can never be scored ([`window_lost`](@ref)) with cause `:lost`, the
-others with `cause`.
+that can never be scored with the cause of their loss
+([`window_loss`](@ref)), the others with `cause`.
 """
 function declare_gaps!(
     state::ReplayState,
@@ -1324,12 +1520,12 @@ function declare_gaps!(
 )
     m = first_window
     while m <= last_window
-        lost = window_lost(state, m)
+        this = something(window_loss(state, m), cause)
         stop = m
-        while stop < last_window && window_lost(state, stop + 1) == lost
+        while stop < last_window && something(window_loss(state, stop + 1), cause) == this
             stop += 1
         end
-        declare_gap!(state, GapEvent(m, stop, lost ? :lost : cause, state.commit.now))
+        declare_gap!(state, GapEvent(m, stop, this, state.commit.now))
         m = stop + 1
     end
     return nothing
@@ -1374,14 +1570,14 @@ function release_windows!(state::ReplayState, t::Dates.DateTime, scored, on_wind
             push!(scored, record)
             on_window === nothing || on_window(record)
             commit.next += 1
-        elseif window_lost(state, m)
+        elseif (cause = window_loss(state, m)) !== nothing
             stop = m
             while !haskey(commit.pending, stop + 1) &&
                   (commit.last_window == 0 || stop + 1 <= commit.last_window) &&
-                  window_lost(state, stop + 1)
+                  window_loss(state, stop + 1) === cause
                 stop += 1
             end
-            declare_gap!(state, GapEvent(m, stop, :lost, commit.now))
+            declare_gap!(state, GapEvent(m, stop, cause, commit.now))
         elseif commit.order_horizon !== nothing &&
                !isempty(commit.pending) &&
                commit.now - minimum(p.complete_at for p in values(commit.pending)) >
@@ -1481,8 +1677,9 @@ end
                trailing_psd = nothing, order_horizon = nothing, late_policy = :skip,
                on_window = nothing) -> DataFrame
 
-Replay the arrival feed of `run` in mission-time order through
-[`process_event!`](@ref) and return the [`windows_table`](@ref): one row
+Replay the arrival feed and the declared holes of `run` in mission-time
+order through [`process_event!`](@ref) and [`process_hole!`](@ref) and
+return the [`windows_table`](@ref): one row
 per scored window with `window`, `row_start`, `row_end`, `content_start`,
 `content_end`, `complete_at`, `completing_batch`, `coverage`, `score`,
 `decision`, `inference_wall_ms`, `psd_row` (and `release_at` for a
@@ -1501,8 +1698,8 @@ end
                  trailing_psd = nothing, order_horizon = nothing, late_policy = :skip,
                  on_window = nothing) -> ReplayState
 
-The [`ReplayState`](@ref) after the whole arrival feed of `run`, finalised
-([`finalize_replay!`](@ref)): [`windows_table`](@ref) and
+The [`ReplayState`](@ref) after the whole arrival feed and every declared
+hole of `run`, finalised ([`finalize_replay!`](@ref)): [`windows_table`](@ref) and
 [`gaps_table`](@ref) read from it.
 """
 function replay_state(
@@ -1525,12 +1722,47 @@ function replay_state(
             order_horizon = order_horizon,
             late_policy = late_policy,
         )
-        for event in arrival_events(run)
-            process_event!(state, run, event; on_window = on_window)
-        end
+        consume!(
+            state,
+            run,
+            arrival_events(run),
+            declared_holes(run);
+            on_window = on_window,
+        )
         finalize_replay!(state; on_window = on_window)
         state
     end
+end
+
+"""
+    consume!(state, run, events, holes; on_window = nothing)
+
+Feed arrival `events` and declared `holes` to a replay in mission-time
+order: each hole before the first event later than its declaration, ties
+to the hole, so that a hole declared at an arrival is known when that
+arrival is processed. The producer's declarations need not be in time
+order across its writers; they are sorted here, stably.
+"""
+function consume!(
+    state::ReplayState,
+    run::AbstractTelemetryRun,
+    events::AbstractVector{ArrivalEvent},
+    holes::AbstractVector{DeclaredHole};
+    on_window = nothing,
+)
+    pending = sort(holes; by = h -> h.declared_at, alg = Base.Sort.MergeSort)
+    i = 1
+    for event in events
+        while i <= length(pending) && pending[i].declared_at <= event.sim_time
+            process_hole!(state, pending[i]; on_window = on_window)
+            i += 1
+        end
+        process_event!(state, run, event; on_window = on_window)
+    end
+    for hole in pending[i:end]
+        process_hole!(state, hole; on_window = on_window)
+    end
+    return nothing
 end
 
 """
@@ -1539,13 +1771,16 @@ end
                order_horizon = nothing, late_policy = :skip,
                on_window = nothing, max_wall_sec = Inf) -> DataFrame
 
-Live mode: poll the arrival feed of `run` every `poll_interval_sec`,
-consuming events beyond those already processed, until the run reaches a
-terminal state (`run_state` ≠ `:active`) and the feed is drained, or
-`max_wall_sec` of wall time elapse. The consumer never writes into the run.
-A stateful scorer is served in content order as in [`replay_run`](@ref);
-the replay is finalised ([`finalize_replay!`](@ref)) when the loop ends.
-Returns the [`windows_table`](@ref).
+Live mode: poll the arrival feed and the declared holes of `run` every
+`poll_interval_sec`, consuming the events and holes beyond those already
+processed in mission-time order, until the record is final
+([`record_final`](@ref)) and both feeds are drained, or `max_wall_sec` of
+wall time elapse. The batches that fresh arrivals name are resolved with
+[`batch_records`](@ref) rather than by listing the run again. The consumer
+never writes into the run. A stateful scorer is served in content order as
+in [`replay_run`](@ref); the replay is finalised
+([`finalize_replay!`](@ref)) when the loop ends. Returns the
+[`windows_table`](@ref).
 """
 function follow_run(
     run::AbstractTelemetryRun,
@@ -1571,21 +1806,22 @@ function follow_run(
     )
     start = time()
     while true
-        events = arrival_events(run)
-        fresh = length(events) > state.consumed
+        # Read before the feeds, so that a record final at this instant is
+        # drained by this poll
+        final = record_final(run)
+        events = arrival_events(run)[(state.consumed+1):end]
+        holes = declared_holes(run; after = state.holes_consumed)
+        fresh = !isempty(events) || !isempty(holes)
         if fresh
-            # New batches may have appeared since the batch list was taken
-            for b in list_batches(run)
-                state.batches[b.name] = b
-            end
-            for event in events[(state.consumed+1):end]
-                process_event!(state, run, event; on_window = on_window)
-            end
+            # Batches that appeared since the batch list was taken
+            unknown = unique(e.batch for e in events if !haskey(state.batches, e.batch))
+            isempty(unknown) ||
+                foreach(b -> state.batches[b.name] = b, batch_records(run, unknown))
+            consume!(state, run, events, holes; on_window = on_window)
         end
-        terminal = run_state(run) != :active
-        (terminal && !fresh) && break
+        (final && !fresh) && break
         time() - start > max_wall_sec && break
-        sleep(poll_interval_sec)
+        fresh || sleep(poll_interval_sec)
     end
     finalize_replay!(state; on_window = on_window)
     return windows_table(state)

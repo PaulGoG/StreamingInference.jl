@@ -163,6 +163,14 @@ it once before its first window. A no-op unless an estimator implements it.
 reset_estimator!(::AbstractWindowEstimator) = nothing
 
 """
+    GAP_CAUSES
+
+The causes a [`GapEvent`](@ref) may carry.
+"""
+const GAP_CAUSES =
+    (:lost, :undelivered, :horizon, :stream, :scheduled, :recorder, :not_generated, :other)
+
+"""
     GapEvent(first_window, last_window, cause, declared_at)
 
 A run of consecutive windows `first_window:last_window` that a
@@ -170,8 +178,10 @@ A run of consecutive windows `first_window:last_window` that a
 `declared_at` before the first window after it is released. `cause` is
 `:lost` (the window's own rows, or more of its conditioning stretch than
 the coverage bound admits, fell in a lost or pruned batch), `:undelivered`
-(not delivered by the end of the record), or `:horizon` (not delivered
-within the order horizon while later windows were waiting).
+(not delivered by the end of the record), `:horizon` (not delivered
+within the order horizon while later windows were waiting), or the cause
+of a hole the producer declared over those rows (`:stream`, `:scheduled`,
+`:recorder`, `:not_generated`, `:other`; [`DeclaredHole`](@ref)).
 """
 struct GapEvent
     first_window::Int
@@ -189,9 +199,8 @@ struct GapEvent
                 "gap of windows $first_window:$last_window; need 1 <= first <= last.",
             ),
         )
-        cause in (:lost, :undelivered, :horizon) || throw(
-            ArgumentError("gap cause $cause; expected :lost, :undelivered, or :horizon."),
-        )
+        cause in GAP_CAUSES ||
+            throw(ArgumentError("gap cause $cause; expected one of $(GAP_CAUSES)."))
         return new(Int(first_window), Int(last_window), cause, declared_at)
     end
 end
