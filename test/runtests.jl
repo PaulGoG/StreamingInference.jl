@@ -36,27 +36,8 @@ end
           nothing
     @test ExplicitImports.check_all_qualified_accesses_via_owners(StreamingInference) ===
           nothing
-    # The reference run adapter of DeepSpaceTelemetry is public by the
-    # producer's versioning policy (versioned with its run-directory
-    # contract), not by declaration
-    @test ExplicitImports.check_all_qualified_accesses_are_public(
-        StreamingInference;
-        ignore = (
-            :RunHandle,
-            :BatchRecord,
-            :GapTracker,
-            :open_run,
-            :run_geometry,
-            :run_state,
-            :record_final,
-            :list_batches,
-            :batch_rows,
-            :read_batch_matrix,
-            :arrival_events,
-            :declared_holes,
-            :declare!,
-        ),
-    ) === nothing
+    @test ExplicitImports.check_all_qualified_accesses_are_public(StreamingInference) ===
+          nothing
     @test ExplicitImports.check_no_self_qualified_accesses(StreamingInference) === nothing
 end
 

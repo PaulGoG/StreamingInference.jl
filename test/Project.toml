@@ -16,5 +16,5 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-DeepSpaceTelemetry = {url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl.git", rev = "8e4a4ca8cc981c8b3f2aae24dffbd0c7090fda51"}
+DeepSpaceTelemetry = {url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl.git", rev = "4352f565558d485c8d6cdd624e9ec6f40936aa24"}
 StreamingInference = {path = ".."}
