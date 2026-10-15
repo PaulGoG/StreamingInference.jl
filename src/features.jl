@@ -255,8 +255,9 @@ end
     load_data(feature_path, label_path) -> (X, y, df_labels)
 
 Raw feature matrix, integer label vector, and the full label table (which
-retains auxiliary columns such as `SNR`) from the CSVs written by
-`scripts/preprocess_ldc.jl`.
+retains auxiliary columns such as `SNR`) from the CSVs written by a
+pre-processing stage: one feature row per window, and a label table with
+a `Label` column and as many rows; `DimensionMismatch` otherwise.
 """
 function load_data(feature_path::AbstractString, label_path::AbstractString)
     X = load_features(feature_path)

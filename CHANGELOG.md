@@ -102,6 +102,17 @@ follow [Semantic Versioning](https://semver.org/).
   `ArgumentError` naming a scorer type without a method.
 
 ### Changed
+- The README and the manual are written for a reader new to the package:
+  what it does and that it works on its own, installation, an example that
+  runs as printed (the RMS scorer declares its unbounded score), the
+  vocabulary of a telemetry downlink (producer, run, batch, payload rows,
+  mission time, delivered, lost and pruned batches, declared holes), the
+  widening of holes, the credited span and the cost of a persistence, and
+  the reference split into the public interface and the internals.
+  Docstrings no longer refer to the pipeline of the other packages; the
+  false-alarm episodes of `alert_latency_table` are those outside every
+  credited span, as computed (the docstring said label span), and
+  `read_batch` may return a matrix.
 - `follow_run` polls the declared holes beside the arrival feed, resolves
   only the batches its fresh arrivals name (`batch_records`) instead of
   listing the run on every poll, polls again at once while the feeds

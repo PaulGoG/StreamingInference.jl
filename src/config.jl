@@ -117,7 +117,7 @@ end
 
 `p` as recorded in a provenance snapshot: relative to
 [`project_root`](@ref) when it lies inside it, and otherwise its file
-name alone. A path outside the package root belongs to the machine that
+name alone. A path outside the pipeline root belongs to the machine that
 ran the stage, not to the run, and carries the account name and the
 directory layout of that machine into artifacts that are meant to be
 published; the file name is what identifies the input. Use
@@ -223,7 +223,8 @@ end
     pipeline_paths(config) -> NamedTuple
 
 Output roots of the pipeline from the `[paths]` section — `inputs`,
-`models`, `plots`, `results` — resolved against the package root. Absent
+`models`, `plots`, `results` — resolved against the pipeline root
+([`project_root`](@ref)). Absent
 keys fall back to the standard tree (`data/inputs`, `models`,
 `data/outputs/plots`, `data/outputs/results`).
 """

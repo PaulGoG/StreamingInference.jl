@@ -255,7 +255,7 @@ candidate with `threshold`, `precision`, `recall`, `fpr`, `n_events`,
 `n_detected`, `event_recall`, `n_false_alarm_episodes`, and
 `false_alarms_per_30d`. The table is the event-level operating
 characteristic on which [`select_threshold`](@ref) fits the decision
-threshold; the stages persist it as `threshold_sweep.csv`.
+threshold.
 """
 function threshold_sweep(
     y::AbstractVector{<:Integer},

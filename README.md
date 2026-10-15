@@ -7,23 +7,35 @@
 [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Windowed analysis of a time series that arrives in batches, late, out of
-order and with gaps. The package schedules windows over whatever part of
-the record has been delivered, conditions each window (high-pass,
-whitening by a static or a causal Welch PSD estimate), hands it to an
-estimator, and evaluates the result: thresholds, event-level metrics, alert
-latencies. The estimator is a type you supply; nothing here depends on a
-physical domain or on a particular method.
+StreamingInference.jl analyses, window by window, a time series that is
+delivered in batches: late, out of order and with gaps. It keeps track of
+which rows of the record have been delivered, schedules each window once
+the stretch of data around it has arrived, conditions it by a high-pass
+filter and by whitening, with a given noise power spectral density (PSD)
+or with a causal Welch estimate made from delivered data only, passes it
+to an estimator, and evaluates the output: decision thresholds, event-level
+metrics, false-alarm rates and alert latencies. The estimator is a type
+you supply; nothing here depends on a physical domain or on a particular
+method.
 
-It is the base of a set of three packages. I wrote this code as the
-domain-general layer of
+A record may hold several synchronous channels. The payload is then a
+matrix with one column per channel, every batch delivers all channels
+together, each channel is whitened by its own PSD, and the scorer receives
+a matrix window with one column per channel. `ScheduledRecordRun` applies
+the delivery of a one-column run to a local multichannel record.
+
+The package works on its own. It is the domain-general base of a set of
+three packages:
+[MilliHertzBase.jl](https://github.com/PaulGoG/MilliHertzBase.jl) builds
+on it the gravitational-wave layer for the Laser Interferometer Space
+Antenna (LISA), with noise models, waveforms, readers of the LISA Data
+Challenge products, labelling and payload export, and
 [MilliHertzQML.jl](https://github.com/PaulGoG/MilliHertzQML.jl), a
-quantum classifier for gravitational-wave telemetry, and moved it into its
-own package so that other pipelines (other estimators, other kinds of
-series) can share the same streaming, provenance and evaluation code;
-[MilliHertzBase.jl](https://github.com/PaulGoG/MilliHertzBase.jl), the
-gravitational-wave layer, builds on it. The manual is built from `main` at
+variational quantum classifier, builds on both. The manual is built from
+`main` at
 [PaulGoG.github.io/StreamingInference.jl/dev](https://PaulGoG.github.io/StreamingInference.jl/dev/).
+
+## Layout
 
 ```
 StreamingInference.jl/
@@ -45,19 +57,22 @@ The full tree is at the end of this page.
 
 ## Installation
 
-The package requires Julia 1.13 or later and is not registered. There is
-no release yet: an environment adds it from this repository, following
-`main` or pinned to a commit with `rev`:
+The package requires Julia 1.13 or later and is not registered. An
+environment adds it from this repository, following `main` or pinned to a
+commit with `rev`:
 
 ```julia
 using Pkg
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")
 ```
 
-The figures need `CairoMakie` in the same environment. Runs of the
-[DeepSpaceTelemetry](https://github.com/PaulGoG/DeepSpaceTelemetry.jl)
-producer open with `open_telemetry_run` once DeepSpaceTelemetry 2.6 or
-later is loaded beside this package.
+The figures need `CairoMakie` in the same environment.
+[DeepSpaceTelemetry.jl](https://github.com/PaulGoG/DeepSpaceTelemetry.jl)
+simulates the telemetry downlink of a spacecraft (ground-station passes,
+packet loss and retransmission, an on-board recorder); its runs open with
+`open_telemetry_run` once DeepSpaceTelemetry 2.6 or later is loaded beside
+this package. It is not registered either:
+`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl")`.
 
 ## Entry points
 
@@ -79,9 +94,12 @@ whitened window:
 ```julia
 using StreamingInference, Dates, Random
 
+# Whitened noise has unit variance: its RMS lies near 1, and the score has
+# no upper bound.
 struct RMSScorer <: AbstractWindowScorer end
 StreamingInference.window_score(::RMSScorer, w::AbstractVector{<:Real}, ::Real) =
     Float32(sqrt(sum(abs2, w) / length(w)))
+StreamingInference.score_bounds(::RMSScorer) = (0.0, Inf)
 
 fs = 0.2                                     # sampling rate [Hz]
 psd(f) = 1e-40 * (1 + (1e-3 / f)^2)          # one-sided noise PSD [1/Hz]
@@ -95,6 +113,10 @@ run = MemoryTelemetryRun(geometry, payload, events)
 detector = StreamingDetector(RMSScorer(), 1.5; sample_rate = fs, window_size = 1000,
                              step_size = 100, psd = psd, context_windows = 1)
 windows = replay_run(run, detector)          # one row per scored window
+lo, hi = extrema(windows.score)
+println(size(windows, 1), " windows, scores ", round(lo; digits = 2), " to ",
+        round(hi; digits = 2), ", alarms ", sum(windows.decision))
+# 71 windows, scores 0.97 to 1.04, alarms 0: no window of noise reaches 1.5
 ```
 
 `windows` holds, per window, its content span, the time its conditioning
@@ -106,18 +128,17 @@ and the alert tables.
 ## Status
 
 No release yet: version 0.1.0-DEV on `main`, which MilliHertzBase.jl and
-MilliHertzQML.jl pin by commit. The code was the domain-general layer of
-MilliHertzQML.jl until the layers were separated into packages on
-1 October 2026; the repository keeps the history of those files. Known
-limitations, inherited from that origin and to be generalised:
+MilliHertzQML.jl pin by commit; install by URL, following `main` or a
+commit. Known limitations, to be generalised:
 
 - the event tables of `alert_latency_table` and `event_merger_times` name
   the event time `merger_time_s` (or `t_c_sec`);
 - the run interface follows the batch naming of the DeepSpaceTelemetry
-  producer (`LIVE_batch_<k>`, `ARCH_batch_<k>`), and `replay_run` keeps a
-  `tdi_gap_dilation_sec` keyword;
+  producer (`LIVE_batch_<k>`, `ARCH_batch_<k>`), and `replay_run` names the
+  widening of holes `tdi_gap_dilation_sec`, after the time-delay
+  interferometry (TDI) of LISA;
 - the default high-pass cutoff of `StreamingDetector` (0.5 mHz) suits the
-  millihertz band of its origin; set it for other series.
+  millihertz band of LISA; set it for other series.
 
 ## Full file tree
 

@@ -240,7 +240,7 @@ Every batch known to the run (delivered, lost, or pruned), sorted by index.
 function list_batches end
 
 """
-    read_batch(run, name) -> Vector{Float32}
+    read_batch(run, name) -> Vector{Float32} or Matrix{Float32}
 
 Payload samples of the delivered batch `name`, its segments concatenated in
 ascending segment id: a vector, or for a run of several synchronous channels
@@ -603,10 +603,11 @@ admits a window whose context is incomplete.
 side of a window: a window becomes evaluable only once that stretch, cut
 to the record by `payload_rows` (0 meaning unknown, so no cut at the
 end), is covered. The whitening is zero-phase and its kernel therefore
-two-sided, so a window scored before the data after it has arrived is not
-conditioned as the batch pipeline conditions it; matching that
-conditioning requires a lag of `context_rows` samples behind the delivery
-front.
+two-sided, so a window scored before the data after it has arrived is
+conditioned differently from the same window of the whole record
+conditioned offline ([`highpass_record`](@ref), then
+[`whiten_record`](@ref)); matching that conditioning requires a lag of
+`context_rows` samples behind the delivery front.
 """
 mutable struct WindowScheduler
     window_size::Int
@@ -657,7 +658,7 @@ Payload rows that must be delivered before window `m` can be scored: its
 own rows widened by `context_rows` on each side and cut to the record
 (`payload_rows`, when known). At the ends of a record the stretch cannot
 be centred on the window and the score is edge-affected, exactly as the
-first and last windows of a batch-processed record are.
+first and last windows of a record conditioned as a whole are.
 """
 function conditioning_rows(scheduler::WindowScheduler, m::Integer)
     w = window_rows(scheduler, m)
@@ -720,7 +721,8 @@ end
                       context_windows = 4)
 
 Scoring of complete windows out of a partially delivered record with the
-same conditioning as the batch pipeline. A window is cut from the delivered
+conditioning applied offline to a whole record ([`highpass_record`](@ref),
+then [`whiten_record`](@ref)). A window is cut from the delivered
 stretch around it — up to `context_windows` window lengths on each side —
 which is high-passed and, when `psd` is given, whitened as a whole
 ([`condition_window`](@ref)); the conditioned window is scored by `scorer`
@@ -778,14 +780,13 @@ end
     condition_window(detector, stretch, offset; psd = detector.psd) -> AbstractVecOrMat{Float64}
 
 The window starting at `offset` (1-based) of the contiguous delivered
-`stretch`, conditioned as the batch pipeline conditions a record. A matrix
-`stretch` holds several synchronous channels, one per column; each is
-conditioned on its own with the PSD of its position in `psd`
-([`channel_psds`](@ref)), and the window is returned as a matrix. For one
-channel: the
+`stretch`, conditioned as a whole record is conditioned offline: the
 stretch high-passed ([`highpass_record`](@ref)) and, unless `psd` is
 `nothing`, whitened by `psd` ([`whiten_record`](@ref)) as a whole, then
-the window cut from it. `psd` replaces the detector's whitening PSD for
+the window cut from it. A matrix `stretch` holds several synchronous
+channels, one per column; each is conditioned on its own with the PSD of
+its position in `psd` ([`channel_psds`](@ref)), and the window is
+returned as a matrix. `psd` replaces the detector's whitening PSD for
 this window — in a replay under [`TrailingWelch`](@ref), the causal PSD
 estimate, made only from data already delivered to the ground station.
 """
@@ -873,7 +874,7 @@ end
 One scored window of a replay: `window` index, payload `row_start` and
 `row_end`, their mission times `content_start` and `content_end`, the
 arrival time `complete_at` of the `completing_batch`, the window's
-`coverage`, the classifier `score`, the `decision`, the inference wall
+`coverage`, the scorer's `score`, the `decision`, the inference wall
 time `inference_wall_ms`, and `psd_row`, the last delivered row behind
 the causal PSD estimate ([`TrailingWelch`](@ref)) the window
 was whitened with, 0 when the detector's static PSD was used, and
@@ -1015,19 +1016,17 @@ Causal whitening of a replay. Each window is whitened by the median
 Welch estimate ([`welch_psd`](@ref), segments of `segment_length` samples)
 of the delivered record behind it: every delivered run inside the last
 `span_rows` rows before the end of the window's conditioning stretch, each
-run high-passed as the detector high-passes every stretch — the order in
-which the batch pre-processor estimates its `"welch"` PSD — and the
-segments of all runs pooled, so that no segment spans a delivery hole.
-The high-pass rings at both ends of a run (the ends of the record in the
-batch pipeline, whose edge windows are dropped), so `edge_rows` rows are
-trimmed from each end of a high-passed run before it is segmented, and a
-run must hold a segment beyond that trim. A positive `smoothing_dex`
-smooths the estimate in log-frequency ([`smooth_psd`](@ref)), as
-`[preprocessing] psd_smoothing_dex` smooths the batch estimate the model's
-features were whitened with. Nothing that has not reached the ground
-enters the estimate, unlike a
-PSD of the whole record, which at every window of a streamed mission
-contains data still to be delivered. The estimate is redone once the end
+run high-passed as the detector high-passes every stretch, so that the
+estimate describes the high-passed series it whitens, and the segments of
+all runs pooled, so that no segment spans a delivery hole. The high-pass
+rings at both ends of a run, as at the ends of a whole record, so
+`edge_rows` rows are trimmed from each end of a high-passed run before it
+is segmented, and a run must hold a segment beyond that trim. A positive
+`smoothing_dex` smooths the estimate in log-frequency with a Gaussian
+kernel of that width in decades ([`smooth_psd`](@ref)). Nothing that has
+not reached the ground enters the estimate, unlike a PSD of the whole
+record, which at every window of a streamed mission contains data still
+to be delivered. The estimate is redone once the end
 of that record has moved by `refresh_rows` rows since the previous one.
 While no delivered run behind a window holds a segment — at the start of
 a mission — the window is whitened by the previous estimate, and by the
@@ -1696,8 +1695,12 @@ per scored window with `window`, `row_start`, `row_end`, `content_start`,
 [`Stateful`](@ref) scorer, whose windows are released in content order
 under `order_horizon` and `late_policy`; [`OrderedCommit`](@ref)).
 `trailing_psd`, a [`TrailingWelch`](@ref), whitens every window by a
-causal PSD estimate instead of the detector's static PSD. The gaps of a
-stateful replay are read from [`replay_state`](@ref).
+causal PSD estimate instead of the detector's static PSD.
+`tdi_gap_dilation_sec` widens every permanent hole on both sides by that
+interval, for a derived series in which one sample depends on input
+samples up to that interval away (for LISA, the delays of time-delay
+interferometry); the default 0 suits a series without such memory. The
+gaps of a stateful replay are read from [`replay_state`](@ref).
 """
 function replay_run(run::AbstractTelemetryRun, detector::StreamingDetector; kwargs...)
     return windows_table(replay_state(run, detector; kwargs...))
@@ -1842,8 +1845,9 @@ end
 """
     event_merger_times(events) -> Vector{Float64}
 
-Merger times [s after the mission epoch] of an event table: the column
-`merger_time_s` (LDC event tables) or `t_c_sec` (the simulator catalogue).
+Event times [s after the mission epoch] of an event table: the column
+`merger_time_s`, or else `t_c_sec`; `ArgumentError` when the table has
+neither.
 """
 function event_merger_times(events::DataFrame)
     "merger_time_s" in names(events) && return Float64.(events.merger_time_s)
@@ -1860,20 +1864,24 @@ end
                         persistence = 1, crediting = :signal,
                         confirmation_persistence = 0) -> DataFrame
 
-Per event of `events` (columns `merger_time_s` [s after the mission epoch]
-and, when present, `label_start_index`/`label_end_index` payload rows; a
-`label` or `event` column names it): the earliest alert of `windows` (the
-table of [`replay_run`](@ref)) touching the event's credited span (rows, or
-the window containing the merger when no span is given).
+Per event of `events`: the earliest alert of `windows` (the table of
+[`replay_run`](@ref)) touching the event's credited span. The event table
+gives the event time `merger_time_s`, or `t_c_sec`
+([`event_merger_times`](@ref)), in seconds after the mission epoch, and,
+when present, the label span `label_start_index`/`label_end_index` in
+payload rows; a `label` or `event` column names the events. Without label
+spans the credited span is the row of the event time, so the windows that
+contain it are credited.
 
 `crediting` fixes where the credited span starts. With `:signal` it starts
 at the signal onset `signal_start_index` of the event table (the first
 window in which the source reaches the labelling SNR threshold) and ends
-with the label span: an alarm earlier in the label span cannot be caused by the source and
-counts as a false alarm. With `:label` the whole label span is credited,
-the convention of the training labels (96 h before to 27 min after the
-merger for the Isfan et al. (2025) spans), which credits noise alarms
-preceding the signal as early detections. A table with spans but without
+with the label span: an alarm earlier in the label span cannot be caused
+by the source and counts as a false alarm. With `:label` the whole label
+span is credited, the convention of the training labels (96 h before to
+27 min after the merger for the spans of Isfan et al. 2025,
+doi:10.1088/1361-6382/ae1787), which credits noise alarms preceding the
+signal as early detections. A table with spans but without
 `signal_start_index` is refused under `:signal`.
 
 An alert is a run of `persistence` consecutive alarmed windows —
@@ -1881,31 +1889,31 @@ consecutive in window index, whatever order they reached the ground — at
 least one of which overlaps the span. It is raised by the arrival that
 completes the run: `t_alarm` is the latest time at which one of its
 windows was scored ([`scored_at`](@ref): `complete_at`, or `release_at`
-for a stateful scorer) and `alarm_window` the window of that arrival. With `persistence = 1`
-every alarmed window is an alert on its own. `latency_data_h = t_alarm −
-t_merger` (negative when the alert precedes the merger),
-`latency_total_h = latency_data_h + processing_latency_hours`, the
-inference wall time of the completing window, `detected`, and
+for a stateful scorer) and `alarm_window` the window of that arrival. With
+`persistence = 1` every alarmed window is an alert on its own.
+`latency_data_h = t_alarm − t_merger` (negative when the alert precedes
+the event), `latency_total_h = latency_data_h + processing_latency_hours`,
+the inference wall time of the completing window, `detected`, and
 `shared_alert`, true when the same alert is also another event's (label
-spans that overlap). Runs of
-alarmed windows outside every label span that reach `persistence` are
-false-alarm episodes, reported as `false_alarms_per_30d` in every row;
-shorter runs raise no alert and are not counted. `alert_persistence`
-and `alert_crediting` record the criteria.
+spans that overlap). Runs of alarmed windows outside every credited span
+that reach `persistence` are false-alarm episodes, reported as
+`false_alarm_episodes` and `false_alarms_per_30d` in every row; shorter
+runs raise no alert and are not counted. `alert_persistence` and
+`alert_crediting` record the criteria.
 
 A window of ``W`` samples advanced by ``S`` puts every sample in
-``κ = W/S`` consecutive windows ([`window_overlap`](@ref)), so a transient
-shorter than a step can alarm ``κ`` consecutive windows and pass any
-persistence up to ``κ``. With `confirmation_persistence > 0` the table adds
-a second tier: the alert is confirmed by the arrival that completes
-`confirmation_persistence` consecutive alarmed windows touching the span,
-which must exceed ``κ`` so that a confirmed alert rests on alarms of
-windows sharing no sample. The columns `confirmed`,
-`confirmation_window`, `t_confirmation`, `confirmation_latency_data_h`,
-`confirmation_latency_total_h`, `false_confirmations`,
-`false_confirmations_per_30d` (runs outside every span that reach it) and
-`alert_confirmation_persistence` are appended; with the default 0 the
-table has none of them.
+``κ = \\lfloor W/S \\rfloor`` consecutive windows ([`window_overlap`](@ref)),
+so a transient shorter than a step can alarm ``κ`` consecutive windows and
+pass any persistence up to ``κ``. With `confirmation_persistence > 0` the
+table adds a second tier: the alert is confirmed by the arrival that
+completes `confirmation_persistence` consecutive alarmed windows touching
+the span, which must exceed both `persistence` and ``κ`` so that a
+confirmed alert rests on alarms of windows sharing no sample. The columns
+`confirmed`, `confirmation_window`, `t_confirmation`,
+`confirmation_latency_data_h`, `confirmation_latency_total_h`,
+`false_confirmations`, `false_confirmations_per_30d` (runs outside every
+credited span that reach it) and `alert_confirmation_persistence` are
+appended; with the default 0 the table has none of them.
 """
 function alert_latency_table(
     windows::DataFrame,
