@@ -6,6 +6,8 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.1.0] — 2026-10-15
+
 ### Added
 - `threshold_sweep` and `select_threshold` take `tail_candidates`: that
   many candidate thresholds added to the upper tail of the score

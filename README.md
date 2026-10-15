@@ -58,12 +58,13 @@ The full tree is at the end of this page.
 ## Installation
 
 The package requires Julia 1.13 or later and is not registered. An
-environment adds it from this repository, following `main` or pinned to a
-commit with `rev`:
+environment adds it from this repository, at the release tag or following
+`main`:
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.1.0")  # the release
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")                  # main
 ```
 
 The figures need `CairoMakie` in the same environment.
@@ -127,9 +128,10 @@ and the alert tables.
 
 ## Status
 
-No release yet: version 0.1.0-DEV on `main`, which MilliHertzBase.jl and
-MilliHertzQML.jl pin by commit; install by URL, following `main` or a
-commit. Known limitations, to be generalised:
+The first release is 0.1.0 (tag `v0.1.0`, 15 October 2026), which
+MilliHertzBase.jl 0.1.0 and MilliHertzQML.jl 3.0.0 pin by commit;
+install by URL at the tag, or follow `main`. Known limitations, to be
+generalised:
 
 - the event tables of `alert_latency_table` and `event_merger_times` name
   the event time `merger_time_s` (or `t_c_sec`);
@@ -194,10 +196,11 @@ StreamingInference.jl/
 
 ```bibtex
 @software{Gogita_StreamingInference_jl,
-  author = {Gogîță, Paul-Adrian},
-  title  = {{StreamingInference.jl}},
-  url    = {https://github.com/PaulGoG/StreamingInference.jl},
-  year   = {2026}
+  author  = {Gogîță, Paul-Adrian},
+  title   = {{StreamingInference.jl}},
+  version = {0.1.0},
+  url     = {https://github.com/PaulGoG/StreamingInference.jl},
+  year    = {2026}
 }
 ```
 

@@ -28,13 +28,14 @@ builds on it the gravitational-wave layer for the Laser Interferometer
 Space Antenna (LISA), and
 [MilliHertzQML.jl](https://github.com/PaulGoG/MilliHertzQML.jl), a
 variational quantum classifier, builds on both. It requires Julia 1.13 or
-later and is not registered; there is no release yet (version 0.1.0-DEV
-on `main`), and an environment adds it by URL, following `main` or pinned
-to a commit with `rev`:
+later and is not registered; its first release is 0.1.0 (tag `v0.1.0`,
+15 October 2026), and an environment adds it by URL at the tag or
+following `main`:
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.1.0")  # the release
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")                  # main
 ```
 
 The figures need `CairoMakie` in the same environment; the runs of the
