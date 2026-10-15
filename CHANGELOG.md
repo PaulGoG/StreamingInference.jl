@@ -7,6 +7,13 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Added
+- `threshold_sweep` and `select_threshold` take `tail_candidates`: that
+  many candidate thresholds added to the upper tail of the score
+  distribution, at quantiles `1 - ε` with `ε` log-spaced from the quantile
+  step `1/(n_candidates - 1)` down to one window, so that on a block
+  without signal the false-alarm rates between one episode and the coarse
+  step become reachable; the default 0 keeps every existing sweep and
+  fitted threshold unchanged.
 - A confirmation tier of the alert table: `alert_latency_table(...;
   confirmation_persistence)` confirms an alert by the arrival that
   completes that many consecutive alarmed windows touching the credited

@@ -246,7 +246,8 @@ function event_metrics(
 end
 
 """
-    threshold_sweep(y, scores; step_size, sample_rate, n_candidates = 400) -> DataFrame
+    threshold_sweep(y, scores; step_size, sample_rate, n_candidates = 400,
+                    tail_candidates = 0) -> DataFrame
 
 Window- and event-level detection statistics ([`event_metrics`](@ref)) of
 the decision `score >= threshold` at every candidate threshold, the
@@ -256,6 +257,15 @@ candidate with `threshold`, `precision`, `recall`, `fpr`, `n_events`,
 `false_alarms_per_30d`. The table is the event-level operating
 characteristic on which [`select_threshold`](@ref) fits the decision
 threshold.
+
+The quantile grid steps by a fraction ``1/(n_\\mathrm{candidates} - 1)``
+of the windows, a step that on a block without signal spans the whole
+range of false-alarm rates an alert trigger is fitted to.
+`tail_candidates` adds that many candidates to the upper tail, at the
+quantiles ``1 - \\epsilon`` with ``\\epsilon`` log-spaced from the grid
+step down to one window in the block, so that the rates between one
+episode and the coarse step become reachable; 0 keeps the quantile grid
+alone.
 """
 function threshold_sweep(
     y::AbstractVector{<:Integer},
@@ -263,13 +273,26 @@ function threshold_sweep(
     step_size::Integer,
     sample_rate::Real,
     n_candidates::Integer = 400,
+    tail_candidates::Integer = 0,
 )
     length(y) == length(scores) ||
         throw(DimensionMismatch("$(length(y)) labels for $(length(scores)) scores."))
     isempty(y) && throw(ArgumentError("no windows to sweep."))
     n_candidates >= 2 || throw(ArgumentError("n_candidates = $n_candidates; at least 2."))
-    candidates = unique(quantile(scores, range(0, 1; length = n_candidates)))
-    sort!(candidates)
+    tail_candidates >= 0 ||
+        throw(ArgumentError("tail_candidates = $tail_candidates; must be non-negative."))
+    candidates = quantile(scores, range(0, 1; length = n_candidates))
+    if tail_candidates > 0 && length(scores) > n_candidates
+        tail = exp.(
+            range(
+                log(1 / (n_candidates - 1)),
+                log(1 / length(scores));
+                length = tail_candidates,
+            ),
+        )
+        append!(candidates, quantile(scores, 1 .- tail))
+    end
+    unique!(sort!(candidates))
     sweep = DataFrame(
         threshold = Float64[],
         precision = Float64[],
@@ -308,7 +331,8 @@ end
 
 """
     select_threshold(y, scores; criterion = "far", target_far_per_30d = 3.0,
-                     target_fpr = 0.05, step_size, sample_rate, n_candidates = 400)
+                     target_fpr = 0.05, step_size, sample_rate, n_candidates = 400,
+                     tail_candidates = 0)
         -> (threshold, info)
 
 Decision threshold fitted on a calibration block of labels `y` and `scores`
@@ -330,8 +354,12 @@ from the event-level operating characteristic [`threshold_sweep`](@ref);
   exceed `target_fpr` (monotone, so the scan direction is immaterial).
 - `"youden"`: the maximiser of `tpr - fpr` (requires both classes).
 
-When the block holds no positive window, `"youden"` falls back to `"fpr"`
-with a warning; the other criteria depend on negatives only. A block
+The candidates are those of [`threshold_sweep`](@ref), `n_candidates`
+quantiles and, with `tail_candidates`, a log-spaced tail down to one
+window, which a block without signal needs to reach a false-alarm target
+below the quantile step. When the block holds no positive window,
+`"youden"` falls back to `"fpr"` with a warning; the other criteria depend
+on negatives only. A block
 without negatives makes every candidate admissible for `"far"` and
 `"fpr"`. `info` records the criterion applied, the targets, the rates on
 the fitting block at the threshold (`fit_*`), and the block size. Among
@@ -349,6 +377,7 @@ function select_threshold(
     step_size::Integer,
     sample_rate::Real,
     n_candidates::Integer = 400,
+    tail_candidates::Integer = 0,
 )
     length(y) == length(scores) ||
         throw(DimensionMismatch("$(length(y)) labels for $(length(scores)) scores."))
@@ -374,6 +403,7 @@ function select_threshold(
             step_size = step_size,
             sample_rate = sample_rate,
             n_candidates = n_candidates,
+            tail_candidates = tail_candidates,
         )
         fpr_admissible(row) = isnan(row.fpr) || row.fpr <= target_fpr
         if applied == "far"

@@ -665,6 +665,42 @@ end
     @test_throws ArgumentError threshold_sweep(Int[], Float64[]; geometry...)
     @test_throws ArgumentError threshold_sweep(yv, scores; n_candidates = 1, geometry...)
     @test_throws DimensionMismatch threshold_sweep(yv, scores[1:19]; geometry...)
+    # A block without signal: the quantile grid steps by a quarter of a
+    # percent of the windows, so the far criterion lands on the single
+    # episode at the maximum score; the tail candidates reach the target
+    noise_scores = rand(StableRNG(11), 40_000)
+    noise_labels = zeros(Int, 40_000)
+    block = (step_size = 100, sample_rate = 0.2)
+    coarse = threshold_sweep(noise_labels, noise_scores; block...)
+    fine = threshold_sweep(noise_labels, noise_scores; tail_candidates = 200, block...)
+    @test size(fine, 1) > size(coarse, 1)
+    @test issorted(fine.threshold) && allunique(fine.threshold)
+    @test fine.threshold[1:(size(coarse, 1)-1)] == coarse.threshold[1:(end-1)]
+    @test fine.threshold[end] == coarse.threshold[end]
+    _, info_coarse = select_threshold(
+        noise_labels,
+        noise_scores;
+        criterion = "far",
+        target_far_per_30d = 3.0,
+        block...,
+    )
+    _, info_fine = select_threshold(
+        noise_labels,
+        noise_scores;
+        criterion = "far",
+        target_far_per_30d = 3.0,
+        tail_candidates = 200,
+        block...,
+    )
+    @test info_coarse["fit_false_alarm_episodes"] == 1
+    @test info_fine["fit_false_alarm_episodes"] > 1
+    @test info_fine["fit_false_alarms_per_30d"] <= 3.0
+    @test_throws ArgumentError threshold_sweep(
+        yv,
+        scores;
+        tail_candidates = -1,
+        geometry...,
+    )
     # far, one episode per 30 d: no episode is admissible on ten days, so the
     # lowest threshold clearing both spurious scores is chosen
     t_far, info = select_threshold(
