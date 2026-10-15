@@ -1058,6 +1058,22 @@ end
     @test ext.alert_label_placement([0.5, 0.56], [0.5, 0.52], ["−27.8 h", "−21.1 h"]) ==
           [:above_left, :above_right]
     @test ext.alert_label_placement([0.95], [0.5], ["15.1 h"]) == [:above_left]
+    # A confirmation marker just above and to the right of an alert pushes its
+    # label to the next free position
+    @test ext.alert_label_placement([0.5], [0.5], ["−11.5 h"]) == [:above_right]
+    @test ext.alert_label_placement(
+        [0.5],
+        [0.5],
+        ["−11.5 h"];
+        obstacles_x = [0.52],
+        obstacles_y = [0.53],
+    ) != [:above_right]
+    @test_throws DimensionMismatch ext.alert_label_placement(
+        [0.1],
+        [0.1],
+        ["a"];
+        obstacles_x = [0.2],
+    )
     @test_throws DimensionMismatch ext.alert_label_placement([0.1], [0.1, 0.2], ["a"])
     @test_throws ArgumentError SI.decade_label(0, 10)
     values, ticklabels = SI.log_ticks(0.15, 3.0)

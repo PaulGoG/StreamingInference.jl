@@ -486,14 +486,15 @@ function figure_score_distribution(
 end
 
 """
-    alert_label_placement(x, y, labels) -> Vector{Symbol}
+    alert_label_placement(x, y, labels; obstacles_x = [], obstacles_y = []) -> Vector{Symbol}
 
 Position of each alert label relative to its marker, one of `:above_right`,
 `:above_left`, `:below_right`, `:below_left`, for markers at axis-fraction
 coordinates `x`, `y` (in `[0, 1]`) carrying the texts `labels`. Labels are
 placed in order of `x`; each takes the first position whose box stays
-inside the axis and clear of every marker and of the labels already placed,
-else `:none` (the caller then widens the axis or draws it above and to the
+inside the axis and clear of every marker, of the further markers at
+`obstacles_x`, `obstacles_y` (the unlabelled confirmations), and of the
+labels already placed, else `:none` (the caller then widens the axis or draws it above and to the
 right). The boxes are estimated from the character count at
 the annotation size over the lower axis of the two-panel layout
 (about 780 × 370 pt); the offsets are those of the drawn labels (9 pt
@@ -502,16 +503,22 @@ horizontally, 6 pt vertically).
 function alert_label_placement(
     x::AbstractVector{<:Real},
     y::AbstractVector{<:Real},
-    labels::AbstractVector{<:AbstractString},
+    labels::AbstractVector{<:AbstractString};
+    obstacles_x::AbstractVector{<:Real} = Float64[],
+    obstacles_y::AbstractVector{<:Real} = Float64[],
 )
     length(x) == length(y) == length(labels) ||
         throw(DimensionMismatch("x, y and labels must have equal lengths."))
+    length(obstacles_x) == length(obstacles_y) ||
+        throw(DimensionMismatch("obstacles_x and obstacles_y must have equal lengths."))
     W, H = 780.0, 370.0
     dx, dy = 9 / W, 6 / H
     h = (ANNOTATION_FONTSIZE + 2) / H
     mx, my = 12 / W, 12 / H                     # marker half-extent with its stroke
     overlaps(a, b) = a[1] < b[2] && b[1] < a[2] && a[3] < b[4] && b[3] < a[4]
     markers = [(x[j] - mx, x[j] + mx, y[j] - my, y[j] + my) for j in eachindex(x)]
+    others =
+        [(ox - mx, ox + mx, oy - my, oy + my) for (ox, oy) in zip(obstacles_x, obstacles_y)]
     placed = Tuple{Float64,Float64,Float64,Float64}[]
     placement = fill(:none, length(x))
     for i in sortperm(collect(x))
@@ -525,6 +532,7 @@ function alert_label_placement(
             inside = 0 <= box[1] && box[2] <= 1 && 0 <= box[3] && box[4] <= 1
             clear =
                 !any(j -> j != i && overlaps(box, markers[j]), eachindex(x)) &&
+                !any(b -> overlaps(box, b), others) &&
                 !any(b -> overlaps(box, b), placed)
             if inside && clear
                 placement[i] = p
@@ -638,16 +646,20 @@ function figure_telemetry_alerts(
         confirmation_handle = nothing
         alert_x = Float64[]
         alert_y = Float64[]
+        confirmation_x = Float64[]
         confirmation_y = Float64[]
         if latencies !== nothing && "confirmed" in names(latencies)
             # The second tier, unlabelled: hollow markers at the confirmation
             # time of every confirmed event
             held = latencies[coalesce.(latencies.confirmed, false), :]
-            confirmation_x = [days_since(epoch, t) for t in held.t_confirmation]
-            confirmation_y = [
-                (c - m) / Dates.Millisecond(1) / 3.6e6 for
-                (c, m) in zip(held.t_confirmation, held.t_merger)
-            ]
+            append!(confirmation_x, [days_since(epoch, t) for t in held.t_confirmation])
+            append!(
+                confirmation_y,
+                [
+                    (c - m) / Dates.Millisecond(1) / 3.6e6 for
+                    (c, m) in zip(held.t_confirmation, held.t_merger)
+                ],
+            )
             isempty(confirmation_x) || (
                 confirmation_handle = scatter!(
                     ax_lat,
@@ -701,7 +713,17 @@ function figure_telemetry_alerts(
             limits = (y_lo - bottom * y_span, y_hi + 0.12 * y_span)
             xf = (alert_x .- lo) ./ x_span
             yf = (alert_y .- limits[1]) ./ (limits[2] - limits[1])
-            return alert_label_placement(xf, yf, alert_labels), limits
+            # The confirmation markers are obstacles the labels keep clear of
+            cxf = (confirmation_x .- lo) ./ x_span
+            cyf = (confirmation_y .- limits[1]) ./ (limits[2] - limits[1])
+            return alert_label_placement(
+                xf,
+                yf,
+                alert_labels;
+                obstacles_x = cxf,
+                obstacles_y = cyf,
+            ),
+            limits
         end
         placement, limits = placement_for(0.06)
         if any(p -> !(p in (:above_right, :above_left)), placement)
