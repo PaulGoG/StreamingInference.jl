@@ -834,6 +834,10 @@ end
     empty = Dict{String,Any}()
     @test pipeline_paths(empty).inputs == joinpath(project_root(), "data", "inputs")
     @test inference_settings(empty).block == "all"
+    # Any block name is admissible here; the scored run's split decides
+    @test inference_settings(Dict("inference" => Dict("block" => "evaluation"))).block ==
+          "evaluation"
+    @test_throws ArgumentError inference_settings(Dict("inference" => Dict("block" => "")))
     mktempdir() do dir
         geometry = @test_logs (:warn, r"no feature sidecar") feature_geometry(
             joinpath(dir, "absent_features.csv"),

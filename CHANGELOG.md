@@ -102,6 +102,11 @@ follow [Semantic Versioning](https://semver.org/).
   `ArgumentError` naming a scorer type without a method.
 
 ### Changed
+- `[inference] block` (`inference_settings`) accepts any non-empty block
+  name, not only `validation` and `test`: the run that is scored persists
+  the split that names its blocks (a calibration run has `calibration` and
+  `evaluation`), and the consumer checks the name against it
+  (`check_block`).
 - The README and the manual are written for a reader new to the package:
   what it does and that it works on its own, installation, an example that
   runs as printed (the RMS scorer declares its unbounded score), the

@@ -245,11 +245,27 @@ function pipeline_paths(config::AbstractDict)
 end
 
 """
+    check_block(block) -> String
+
+`[inference] block` validated: `"all"`, or the non-empty name of a block of
+the split the scored run persisted (`validation` and `test` of a training
+run, `calibration` and `evaluation` of a calibration run); the consumer
+checks the name against that split.
+"""
+function check_block(block::AbstractString)
+    isempty(block) && throw(
+        ArgumentError("configuration key `block` is empty; expected all or a block name."),
+    )
+    return String(block)
+end
+
+"""
     inference_settings(config) -> NamedTuple
 
 Validated `[inference]` parameters: feature and label tables, block
-selection, and the window geometry used when a feature table has no
-sidecar.
+selection (`"all"`, or a block named in the split of the scored run,
+[`check_block`](@ref)), and the window geometry used when a feature table
+has no sidecar.
 """
 function inference_settings(config::AbstractDict)
     i = section(config, "inference")
@@ -258,13 +274,7 @@ function inference_settings(config::AbstractDict)
             cfgget(i, "features", "data/inputs/inference_features.csv"; type = String),
         ),
         labels = cfgget(i, "labels", "data/inputs/inference_labels.csv"; type = String),
-        block = cfgget(
-            i,
-            "block",
-            "all";
-            type = String,
-            choices = ("all", "validation", "test"),
-        ),
+        block = check_block(cfgget(i, "block", "all"; type = String)),
         step_size = cfgget(i, "step_size", 100; type = Int, min = 1),
         sample_rate = cfgget(i, "sample_rate", 0.2; type = Float64, min = 1e-6),
     )
