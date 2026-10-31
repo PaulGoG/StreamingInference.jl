@@ -11,3 +11,8 @@ updates:
       - "/docs"
     schedule:
       interval: "weekly"
+    # One pull request per directory and week, not one per package.
+    groups:
+      julia:
+        patterns:
+          - "*"

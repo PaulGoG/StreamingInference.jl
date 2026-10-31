@@ -20,6 +20,7 @@ DeepSpaceTelemetry = {url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl.gi
 StreamingInference = {path = ".."}
 
 [compat]
+julia = "1.13"
 Aqua = "0.8"
 CSV = "1.1"
 CairoMakie = "0.15"
