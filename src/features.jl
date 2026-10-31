@@ -65,25 +65,25 @@ function check_band_edges(band_edges)
 end
 
 """
-    extract_features(x, sample_rate = 0.2; low_band = (1e-3, 5e-3),
-                     high_band = (5e-3, 1e-1), band_edges = nothing, taper = :hann,
-                     feature_set = :whitened, combination = :mean)
+    extract_features(x, sample_rate; low_band, high_band, band_edges = nothing,
+                     taper = :hann, feature_set = :whitened, combination = :mean)
 
 Feature vector of a window `x` sampled at `sample_rate` [Hz], computed
 from its tapered periodogram ``P_k`` ([`tapered_periodogram`](@ref)).
 Returns a tuple of `Float32` whose entries are named by
-[`feature_names`](@ref).
+[`feature_names`](@ref). The analysis bands `low_band` and `high_band`
+[Hz] are required whatever the set, `band_edges` [Hz] by the `:bands`
+set.
 
 A matrix `x` holds a window of several synchronous channels, one per
 column, and `combination` says how they enter; either way the number of
 features does not depend on the number of channels.
 
 - `:mean` (default): the features of the channel-averaged periodogram
-  ([`network_periodogram`](@ref)), the excess power of the network. It is
-  the best incoherent statistic for a signal split equally between the
-  channels, and dilutes one that a single channel sees: its excess power is
-  divided by the number of channels while the noise spread falls only as
-  the root of it.
+  ([`network_periodogram`](@ref)), the excess power of the network. It
+  suits a signal split equally between the channels, and dilutes one that
+  a single channel sees: its excess power is divided by the number of
+  channels while the noise spread falls only as the root of it.
 - `:max`: the features of every channel, combined by the value that lies
   farthest towards a signal — the largest band power and power spread (and,
   for `:paper`, mean and maximum), the smallest entropy. A signal seen by
@@ -106,8 +106,8 @@ amplitude:
 consecutive `band_edges` [Hz] (the first band closed on both sides, the
 others open at their lower edge): the mean whitened power of every band,
 then the entropy and the log power spread as above — `length(band_edges)
-+ 1` features. With the edges `[1e-3, 5e-3, 1e-1]` it reproduces the
-whitened set exactly.
++ 1` features. With the edges `[a, b, c]` it reproduces exactly the
+whitened set of `low_band = (a, b)` and `high_band = (b, c)`.
 
 `feature_set = :paper` is the set of Isfan et al. (2025) on the raw window:
 the normalised spectral entropy and ``\\log_{10}`` of the mean, standard
@@ -119,9 +119,9 @@ Throws an `ArgumentError` when an analysis band holds no frequency bin.
 """
 function extract_features(
     x::AbstractVecOrMat{<:Real},
-    sample_rate::Real = 0.2;
-    low_band::Tuple{Real,Real} = (1e-3, 5e-3),
-    high_band::Tuple{Real,Real} = (5e-3, 1e-1),
+    sample_rate::Real;
+    low_band::Tuple{Real,Real},
+    high_band::Tuple{Real,Real},
     band_edges::Union{Nothing,AbstractVector{<:Real}} = nothing,
     taper::Symbol = :hann,
     feature_set::Symbol = :whitened,

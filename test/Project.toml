@@ -16,5 +16,21 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [sources]
-DeepSpaceTelemetry = {url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl.git", rev = "4352f565558d485c8d6cdd624e9ec6f40936aa24"}
+DeepSpaceTelemetry = {url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl.git", rev = "c5d419e4d725c3465d01b0513f215855382f7f03"}
 StreamingInference = {path = ".."}
+
+[compat]
+Aqua = "0.8"
+CSV = "1.1"
+CairoMakie = "0.15"
+DataFrames = "1"
+Dates = "1"
+DeepSpaceTelemetry = "3.1"
+ExplicitImports = "1"
+FFTW = "1"
+JET = "0.12, 0.13"
+Random = "1"
+StableRNGs = "1"
+Statistics = "1"
+TOML = "1"
+Test = "1"

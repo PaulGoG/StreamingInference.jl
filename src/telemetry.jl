@@ -4,7 +4,8 @@
 # and live-follow engine, and the alert tables of a replay.
 
 """
-    RunGeometry
+    RunGeometry(sample_rate, segment_duration_sec, batch_size, start_sim_time,
+                package_version = "unknown"; payload_rows = 0)
 
 Sampling and batching geometry of a telemetry run: `sample_rate` [Hz],
 `segment_duration_sec`, `batch_size` (segments per batch),
@@ -96,11 +97,7 @@ function parse_batch_name(name::AbstractString)
     m === nothing && throw(
         ArgumentError("batch name $(repr(name)) is not LIVE_batch_<k> or ARCH_batch_<k>."),
     )
-    kind = m[1]
-    digits = m[2]
-    (kind === nothing || digits === nothing) &&
-        throw(ArgumentError("batch name $(repr(name)) has no index."))
-    return parse(Int, digits), kind == "LIVE"
+    return parse(Int, m[2]::AbstractString), m[1] == "LIVE"
 end
 
 """
@@ -139,6 +136,22 @@ function time_row(geometry::RunGeometry, t::Dates.DateTime)
     ms = (t - geometry.start_sim_time) / Dates.Millisecond(1)
     return round(Int, ms * geometry.sample_rate / 1000) + 1
 end
+
+"""
+    hours_between(a, b) -> Float64
+
+The interval from the instant `a` to the instant `b` in hours, negative
+when `b` precedes `a`.
+"""
+hours_between(a::Dates.DateTime, b::Dates.DateTime) = (b - a) / Dates.Millisecond(1) / 3.6e6
+
+"""
+    days_since(epoch, t) -> Float64
+
+Mission time `t` in days after `epoch`.
+"""
+days_since(epoch::Dates.DateTime, t::Dates.DateTime) =
+    (t - epoch) / Dates.Millisecond(1) / 8.64e7
 
 """
     event_symbol(value) -> Symbol
@@ -307,15 +320,18 @@ Empty for a producer that records none.
 run_descriptor(::AbstractTelemetryRun) = Dict{String,Any}()
 
 """
-    open_telemetry_run(run_dir; producer_compat = "1.0", columns = nothing) -> AbstractTelemetryRun
+    open_telemetry_run(run_dir; producer_compat = "2.6", columns = nothing) -> AbstractTelemetryRun
 
 Open a DeepSpaceTelemetry run directory read-only through the producer's
 reference run adapter. Implemented by the package extension that loads
-with DeepSpaceTelemetry 2.6 or later; `producer_compat` is the oldest
-producer version accepted. A run carries one or several named payload
-columns: `columns = nothing` serves the only one and refuses a run with
-several, a name serves that column as a vector, and a vector of names
-serves those columns, in that order, as the channels of a matrix.
+with DeepSpaceTelemetryReader 3.1, the reader package of DeepSpaceTelemetry
+(carried by DeepSpaceTelemetry itself); `producer_compat` is the oldest
+producer version accepted, never below the adapter's own floor of 2.6.0,
+the first producer with the declared-hole feed and the payload-row stamps.
+A run carries one or several named payload columns: `columns = nothing`
+serves the only one and refuses a run with several, a name serves that
+column as a vector, and a vector of names serves those columns, in that
+order, as the channels of a matrix.
 """
 function open_telemetry_run end
 
@@ -324,17 +340,17 @@ function open_telemetry_run end
 
 The names of the payload columns the DeepSpaceTelemetry run at `run_dir`
 carries, from which [`open_telemetry_run`](@ref) selects (`columns`).
-Implemented by the package extension that loads with DeepSpaceTelemetry
-2.6 or later.
+Implemented by the package extension that loads with
+DeepSpaceTelemetryReader 3.1.
 """
 function telemetry_run_columns end
 
 """
     MemoryTelemetryRun(geometry, payload, events; lost = String[], holes = DeclaredHole[])
 
-In-memory run used by the tests: the whole `payload`, an arrival feed
-`events`, the names of batches declared lost, and the holes the producer
-declares ([`declared_holes`](@ref)). Batch `k` holds payload rows
+A run held in memory: the whole `payload`, an arrival feed `events`, the
+names of batches declared lost, and the holes the producer declares
+([`declared_holes`](@ref)). Batch `k` holds payload rows
 [`batch_rows`](@ref)`(k, P)`; every batch of the payload exists. A matrix
 `payload` holds several synchronous channels, one per column.
 """
@@ -609,7 +625,7 @@ conditioned offline ([`highpass_record`](@ref), then
 [`whiten_record`](@ref)); matching that conditioning requires a lag of
 `context_rows` samples behind the delivery front.
 """
-mutable struct WindowScheduler
+struct WindowScheduler
     window_size::Int
     step_size::Int
     min_coverage::Float64
@@ -728,9 +744,9 @@ which is high-passed and, when `psd` is given, whitened as a whole
 ([`condition_window`](@ref)); the conditioned window is scored by `scorer`
 ([`window_score`](@ref)) and alarms at `threshold`. Isolated windows
 without context are scored on their own samples (edge-affected, as the
-first windows of any record). The conditioning belongs to the detector,
-the method to the scorer, so any [`AbstractWindowScorer`](@ref) runs
-through the same replay.
+first windows of any record). The detector conditions the window and the
+scorer evaluates it, so any [`AbstractWindowScorer`](@ref) runs through
+the same replay.
 """
 struct StreamingDetector{S<:AbstractWindowScorer}
     scorer::S
@@ -1075,7 +1091,8 @@ of delivered rows, the [`WindowScheduler`](@ref), the delivered payload
 per batch, the scored windows, the permanent holes (lost or pruned batches
 and the holes the producer declared, each widened by the erosion of
 `tdi_gap_dilation_sec` on either side) with their causes, the numbers of
-arrival events and declared holes consumed,
+arrival events and declared holes consumed, the names of unknown batches
+already reported ([`process_event!`](@ref)),
 under `trailing_psd::`[`TrailingWelch`](@ref) the current causal PSD
 estimate with the last delivered row it was made on, and, when the
 detector's scorer is [`Stateful`](@ref), the [`OrderedCommit`](@ref) that
@@ -1103,6 +1120,7 @@ mutable struct ReplayState
     erosion::Int
     consumed::Int
     holes_consumed::Int
+    unknown_batches::Set{String}
     trailing::Union{Nothing,TrailingWelch}
     trailing_psd::Any
     trailing_row::Int
@@ -1158,6 +1176,7 @@ mutable struct ReplayState
             round(Int, tdi_gap_dilation_sec * geometry.sample_rate),
             0,
             0,
+            Set{String}(),
             trailing_psd,
             nothing,
             0,
@@ -1224,14 +1243,9 @@ function whitening_psd!(state::ReplayState, window::UnitRange{Int})
     d = state.detector
     hi = min(last(span), last(window) + d.context_windows * d.window_size)
     lo = hi - tw.span_rows + 1
-    # Every delivered run inside the span that holds at least one segment
-    # contributes its segments: a hole bounds the runs, never a segment.
-    # While no run holds a segment, the previous estimate of the delivered
-    # record is kept rather than the detector's static PSD, which belongs to
-    # another record.
-    # The high-pass rings at both ends of a run, so `edge_rows` are trimmed
-    # from each end of a high-passed run before it is segmented, and a run
-    # must hold a segment beyond that trim.
+    # A hole bounds the runs, never a segment; while no run holds a segment
+    # beyond the `edge_rows` trim, the previous estimate is kept
+    # (`TrailingWelch`).
     edge = d.highpass_cutoff_hz > 0 ? tw.edge_rows : 0
     runs = UnitRange{Int}[]
     for r in state.coverage.intervals
@@ -1303,8 +1317,11 @@ configured erosion on each side. Other events are ignored. A
 mission time; for a [`Stateful`](@ref) one they are held and the event
 releases, in content order, every held window that no earlier window still
 waits for ([`OrderedCommit`](@ref)), which may include windows completed by
-earlier events. Returns the windows scored by this event; `on_window(record)`
-is called for each.
+earlier events. An event naming a batch the run does not list is skipped;
+the first `ingested`, `lost` or `pruned` event of each such name is
+reported with a warning, since the rows of that batch are then neither
+delivered nor excluded. Returns the windows scored by this event;
+`on_window(record)` is called for each.
 """
 function process_event!(
     state::ReplayState,
@@ -1315,6 +1332,12 @@ function process_event!(
     state.consumed += 1
     scored = WindowRecord[]
     if !haskey(state.batches, event.batch)
+        if event.event in (:ingested, :lost, :pruned) &&
+           !(event.batch in state.unknown_batches)
+            push!(state.unknown_batches, event.batch)
+            @warn "an arrival event names a batch the run does not list; the event is skipped" batch =
+                event.batch event = event.event sim_time = event.sim_time
+        end
         state.commit === nothing ||
             release_windows!(state, event.sim_time, scored, on_window)
         return scored
@@ -1493,13 +1516,6 @@ function window_loss(state::ReplayState, m::Integer)
     return (length(stretch) - n_lost) / length(stretch) < state.scheduler.min_coverage ?
            cause : nothing
 end
-
-"""
-    window_lost(state, m) -> Bool
-
-Whether window `m` can never become evaluable ([`window_loss`](@ref)).
-"""
-window_lost(state::ReplayState, m::Integer) = window_loss(state, m) !== nothing
 
 """
     declare_gap!(state, gap::GapEvent)
@@ -1789,11 +1805,10 @@ Live mode: poll the arrival feed and the declared holes of `run` every
 processed in mission-time order, until the record is final
 ([`record_final`](@ref)) and both feeds are drained, or `max_wall_sec` of
 wall time elapse. The batches that fresh arrivals name are resolved with
-[`batch_records`](@ref) rather than by listing the run again. The consumer
-never writes into the run. A stateful scorer is served in content order as
-in [`replay_run`](@ref); the replay is finalised
-([`finalize_replay!`](@ref)) when the loop ends. Returns the
-[`windows_table`](@ref).
+[`batch_records`](@ref). The consumer never writes into the run. A
+stateful scorer is served in content order as in [`replay_run`](@ref);
+the replay is finalised ([`finalize_replay!`](@ref)) when the loop ends.
+Returns the [`windows_table`](@ref).
 """
 function follow_run(
     run::AbstractTelemetryRun,
@@ -2012,7 +2027,7 @@ function alert_latency_table(
                 ),
             )
         else
-            latency_h = (best_t - t_merger) / Dates.Millisecond(1) / 3.6e6
+            latency_h = hours_between(t_merger, best_t)
             push!(
                 out,
                 (
@@ -2029,8 +2044,8 @@ function alert_latency_table(
             )
         end
     end
-    # One alert can touch two events whose label spans overlap; the table
-    # says so rather than counting each as detected on its own.
+    # One alert can touch two events whose label spans overlap;
+    # `shared_alert` marks both.
     raised = [ismissing(w) ? 0 : Int(w) for w in out.alarm_window]
     out.shared_alert = [w != 0 && count(==(w), raised) > 1 for w in raised]
     # Contiguous alarmed windows outside every span form one episode; only
@@ -2057,7 +2072,7 @@ function alert_latency_table(
     out.t_confirmation =
         Union{Missing,Dates.DateTime}[t === nothing ? missing : t for (t, _) in confirmed]
     out.confirmation_latency_data_h = Union{Missing,Float64}[
-        t === nothing ? missing : (t - t_mergers[i]) / Dates.Millisecond(1) / 3.6e6 for
+        t === nothing ? missing : hours_between(t_mergers[i], t) for
         (i, (t, _)) in enumerate(confirmed)
     ]
     out.confirmation_latency_total_h =
@@ -2126,6 +2141,48 @@ credited_span_label(crediting::Symbol) =
     crediting === :signal ? "Signal span" : "Labelled span"
 
 """
+    credited_span_times(events, geometry; crediting, fallback_span = Dates.Hour(1))
+        -> Vector{Tuple{DateTime,DateTime}}
+
+Mission-time interval of the credited span of every event of an event
+table, as [`alert_latency_table`](@ref) credits alerts under `crediting`
+(`:signal` or `:label`): from the payload row `signal_start_index` or
+`label_start_index` to `label_end_index` ([`row_time`](@ref)). A table
+without label spans gives the interval of length `fallback_span` that ends
+at each event time ([`event_merger_times`](@ref)), for figures that shade
+it. The spans of a table with label spans are validated as in
+`alert_latency_table`.
+
+# Example
+
+```julia
+spans = credited_span_times(events, geometry; crediting = :signal)
+figure_telemetry_alerts(windows, threshold; epoch = geometry.start_sim_time,
+                        label_spans = spans, span_label = credited_span_label(:signal))
+```
+"""
+function credited_span_times(
+    events::DataFrame,
+    geometry::RunGeometry;
+    crediting::Symbol,
+    fallback_span::Dates.Period = Dates.Hour(1),
+)
+    crediting in (:signal, :label) ||
+        throw(ArgumentError("crediting = :$crediting; one of :signal, :label."))
+    starts = credited_span_starts(events, crediting)
+    times = event_merger_times(events)
+    if starts !== nothing
+        return [
+            (row_time(geometry, s), row_time(geometry, Int(e))) for
+            (s, e) in zip(starts, events.label_end_index)
+        ]
+    end
+    event_times =
+        [geometry.start_sim_time + Dates.Millisecond(round(Int, 1000 * t)) for t in times]
+    return [(t - fallback_span, t) for t in event_times]
+end
+
+"""
     credited_span_starts(events, crediting) -> Union{Nothing,Vector{Int}}
 
 First payload rows of the credited spans of an event table: the column
@@ -2141,8 +2198,8 @@ function credited_span_starts(events::DataFrame, crediting::Symbol)
     "signal_start_index" in cols || throw(
         ArgumentError(
             "the event table has label spans but no signal_start_index column; " *
-            "regenerate it with the labelling or generation stage, or credit the " *
-            "whole label span with crediting = :label.",
+            "add the signal onsets, or credit the whole label span with " *
+            "crediting = :label.",
         ),
     )
     starts = Int.(events.signal_start_index)
@@ -2160,22 +2217,11 @@ end
 """
     alarm_runs(indices) -> Vector{UnitRange{Int}}
 
-Maximal runs of consecutive integers of the sorted vector `indices`, as
-ranges of positions into it.
+Maximal runs of consecutive integers of the strictly increasing vector
+`indices`, as ranges of positions into it ([`contiguous_runs`](@ref)).
 """
-function alarm_runs(indices::AbstractVector{<:Integer})
-    runs = UnitRange{Int}[]
-    isempty(indices) && return runs
-    start = 1
-    for j in 2:length(indices)
-        if indices[j] != indices[j-1] + 1
-            push!(runs, start:(j-1))
-            start = j
-        end
-    end
-    push!(runs, start:length(indices))
-    return runs
-end
+alarm_runs(indices::AbstractVector{<:Integer}) =
+    contiguous_runs(trues(length(indices)), indices)
 
 """
     detector_step(windows) -> Int

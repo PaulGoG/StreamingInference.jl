@@ -15,7 +15,7 @@ using CairoMakie.Makie.MathTeXEngine: texfont
 using CairoMakie.Makie: scatter!, stairs!, Observable, Point2f, record
 using CairoMakie.Makie: rowsize!, Auto, LinearTicks, widths
 using DataFrames: DataFrame, nrow
-using Dates: Dates, DateTime
+using Dates: DateTime
 using StreamingInference:
     FIGURE_SIZE, FIGURE_STROKES, figure_size, FIGURE_COLORS, backup_existing!, write_toml
 using StreamingInference: contiguous_runs
@@ -23,6 +23,7 @@ using StreamingInference: FIGURE_FONTSIZE, TICK_FONTSIZE, ANNOTATION_FONTSIZE
 using StreamingInference: LEGEND_STYLE, ANIMATION_PX_PER_UNIT, decimation
 using StreamingInference: log_ticks, check_frame_scale, check_gif_path
 using StreamingInference: frame_schedule, scored_at, score_limits
+using StreamingInference: days_since, hours_between
 import StreamingInference:
     figure_theme,
     save_figure,
@@ -246,12 +247,8 @@ function figure_threshold_sweep(
     far_log = [x > 0 ? x : NaN for x in far]
     lo, hi = extrema(θ)
     pad = 0.02 * max(hi - lo, 1e-3)
-    # The candidates are score quantiles and are sparse in the far tail, so
-    # no row of the sweep reports the applied threshold faithfully: the
-    # nearest candidate lies on either side of it and the next one above can
-    # be far above. The counts therefore come from the caller, which holds
-    # the metrics of the threshold it applied; without them the legend
-    # states the threshold alone.
+    # The counts at the applied threshold come from the caller
+    # (`operating_point`; see the docstring).
     operating = if !isfinite(threshold)
         ""
     elseif operating_point === nothing
@@ -356,7 +353,6 @@ function figure_threshold_sweep(
         xlims!(ax_far, lo - pad, hi + pad)
         # One legend row per entry: the operating-point statement is long
         top_legend!(figure, ax_recall; nbanks = isfinite(threshold) ? 3 : 2)
-        rowgap!(figure.layout, 10)
         figure
     end
 end
@@ -410,7 +406,7 @@ function figure_sensitivity(
             axis,
             0.02,
             0.97;
-            text = "Numbers: labeled windows per SNR bin",
+            text = "Numbers: labelled windows per SNR bin",
             space = :relative,
             align = (:left, :top),
             fontsize = ANNOTATION_FONTSIZE,
@@ -424,19 +420,19 @@ function figure_sensitivity(
 end
 
 function figure_score_distribution(
-    probabilities::AbstractVector{<:Real},
+    scores::AbstractVector{<:Real},
     threshold::Real;
     labels::Union{Nothing,AbstractVector{<:Integer}} = nothing,
     n_bins::Integer = 50,
     score_label::AbstractString = "Score",
     score_range = nothing,
 )
-    isempty(probabilities) && throw(ArgumentError("no scores to plot."))
+    isempty(scores) && throw(ArgumentError("no scores to plot."))
     labels === nothing ||
-        length(labels) == length(probabilities) ||
-        throw(DimensionMismatch("labels and probabilities differ in length."))
+        length(labels) == length(scores) ||
+        throw(DimensionMismatch("labels and scores differ in length."))
     n_bins >= 1 || throw(ArgumentError("n_bins must be positive."))
-    lo, hi = score_limits(probabilities, threshold, score_range)
+    lo, hi = score_limits(scores, threshold, score_range)
     bins = collect(range(lo, hi; length = n_bins + 1))
     return with_theme(figure_theme(; size = figure_size(1))) do
         figure = Figure()
@@ -444,7 +440,7 @@ function figure_score_distribution(
         if labels === nothing
             hist!(
                 axis,
-                probabilities;
+                scores;
                 bins = bins,
                 color = (FIGURE_COLORS.noise, 0.6),
                 strokecolor = FIGURE_STROKES.noise,
@@ -454,7 +450,7 @@ function figure_score_distribution(
         else
             hist!(
                 axis,
-                probabilities[labels .== 0];
+                scores[labels .== 0];
                 bins = bins,
                 color = (FIGURE_COLORS.noise, 0.6),
                 strokecolor = FIGURE_STROKES.noise,
@@ -463,7 +459,7 @@ function figure_score_distribution(
             )
             hist!(
                 axis,
-                probabilities[labels .== 1];
+                scores[labels .== 1];
                 bins = bins,
                 color = (FIGURE_COLORS.signal, 0.5),
                 strokecolor = FIGURE_STROKES.signal,
@@ -549,11 +545,44 @@ function alert_label_placement(
 end
 
 """
-    days_since(epoch, t) -> Float64
+    shade_spans!(axis, spans, epoch) -> handle
 
-Mission time `t` in days after `epoch`.
+Shade on `axis` every span of `spans` (pairs of `DateTime`, or `nothing`)
+over the days since `epoch`, in the colour of the labelled spans. Returns
+the first shading, the legend handle of all of them, or `nothing` when
+there is no span.
 """
-days_since(epoch::DateTime, t::DateTime) = (t - epoch) / Dates.Millisecond(1) / 8.64e7
+function shade_spans!(axis::Axis, spans, epoch::DateTime)
+    handle = nothing
+    spans === nothing && return handle
+    for (a, b) in spans
+        p = vspan!(
+            axis,
+            days_since(epoch, a),
+            days_since(epoch, b);
+            color = (FIGURE_COLORS.label, 0.25),
+        )
+        handle === nothing && (handle = p)
+    end
+    return handle
+end
+
+"""
+    legend_from(entries) -> (handles, labels)
+
+The handles and labels of the `(handle, label)` pairs of `entries` whose
+handle is not `nothing`, in order.
+"""
+function legend_from(entries)
+    handles = Any[]
+    labels = String[]
+    for (h, l) in entries
+        h === nothing && continue
+        push!(handles, h)
+        push!(labels, l)
+    end
+    return handles, labels
+end
 
 function figure_telemetry_alerts(
     windows::DataFrame,
@@ -570,10 +599,8 @@ function figure_telemetry_alerts(
     nrow(windows) >= 1 || throw(ArgumentError("the windows table is empty."))
     t_days = [days_since(epoch, t) for t in windows.content_end]
     scores = Float64.(windows.score)
-    latency_h = [
-        (a - c) / Dates.Millisecond(1) / 3.6e6 for
-        (a, c) in zip(scored_at(windows), windows.content_end)
-    ]
+    latency_h =
+        [hours_between(c, a) for (a, c) in zip(scored_at(windows), windows.content_end)]
     # Windows complete out of order: draw them in content-time order
     order = sortperm(t_days)
     t_days = t_days[order]
@@ -583,18 +610,7 @@ function figure_telemetry_alerts(
     return with_theme(figure_theme(; size = figure_size(2))) do
         figure = Figure()
         ax_score = Axis(figure[1, 1]; ylabel = score_label)
-        span_handle = nothing
-        if label_spans !== nothing
-            for (a, b) in label_spans
-                p = vspan!(
-                    ax_score,
-                    days_since(epoch, a),
-                    days_since(epoch, b);
-                    color = (FIGURE_COLORS.label, 0.25),
-                )
-                span_handle === nothing && (span_handle = p)
-            end
-        end
+        span_handle = shade_spans!(ax_score, label_spans, epoch)
         score_handle =
             lines!(ax_score, t_days, scores; color = FIGURE_COLORS.data, linewidth = 2)
         alarm_handle =
@@ -619,8 +635,8 @@ function figure_telemetry_alerts(
         # The lower panel carries two different latencies against the same
         # mission time: the availability latency of every scored window (the
         # wait for its conditioning stretch and the downlink delay), and, per
-        # event, the alert time measured from the coalescence — negative when
-        # the inspiral is alarmed before the merger.
+        # event, the alert time measured from the event time, negative when
+        # the alert precedes the event.
         ax_lat = Axis(figure[2, 1]; xlabel = "Mission time [days]", ylabel = "Latency [h]")
         # The availability latency cycles with the downlink schedule and fills a band
         # at this scale; it is drawn translucent so that alert labels on it
@@ -655,10 +671,7 @@ function figure_telemetry_alerts(
             append!(confirmation_x, [days_since(epoch, t) for t in held.t_confirmation])
             append!(
                 confirmation_y,
-                [
-                    (c - m) / Dates.Millisecond(1) / 3.6e6 for
-                    (c, m) in zip(held.t_confirmation, held.t_merger)
-                ],
+                [hours_between(m, c) for (c, m) in zip(held.t_confirmation, held.t_merger)],
             )
             isempty(confirmation_x) || (
                 confirmation_handle = scatter!(
@@ -676,12 +689,8 @@ function figure_telemetry_alerts(
         if latencies !== nothing
             hits = latencies[latencies.detected .== true, :]
             alert_x = [days_since(epoch, t) for t in hits.t_alarm]
-            # Data latency t_alarm − t_merger, the quantity of the benchmark
-            # tables; the processing budget is not added
-            alert_y = [
-                (a - m) / Dates.Millisecond(1) / 3.6e6 for
-                (a, m) in zip(hits.t_alarm, hits.t_merger)
-            ]
+            # Data latency t_alarm − t_merger, without the processing latency
+            alert_y = [hours_between(m, a) for (a, m) in zip(hits.t_alarm, hits.t_merger)]
             isempty(alert_x) || (
                 alert_handle = scatter!(
                     ax_lat,
@@ -754,9 +763,7 @@ function figure_telemetry_alerts(
             end
         end
         ylims!(ax_lat, limits...)
-        handles = Any[]
-        labels = String[]
-        for (h, l) in (
+        handles, labels = legend_from((
             (span_handle, span_label),
             (score_handle, score_name),
             (alarm_handle, "Alarm"),
@@ -765,11 +772,7 @@ function figure_telemetry_alerts(
             (alert_handle, "Alert time"),
             (confirmation_handle, "Confirmation"),
             (event_handle, event_label),
-        )
-            h === nothing && continue
-            push!(handles, h)
-            push!(labels, l)
-        end
+        ))
         Legend(figure[0, 1], handles, labels; LEGEND_STYLE..., nbanks = 3)
         rowgap!(figure.layout, 10)
         figure
@@ -782,16 +785,19 @@ end
 
 function animation_theme(; size = FIGURE_SIZE, fontsize::Real = FIGURE_FONTSIZE)
     theme = figure_theme(; size = size, fontsize = fontsize)
-    # The canvas is snapped to an even whole number of typographic points. A
-    # fractional design size renders to a surface whose extent differs from
-    # the frame size declared to the encoder, and the mismatch shows as a band
-    # of noise along the top of every frame; with an even size and a whole
-    # `px_per_unit` the rendered frame is exactly the declared one.
+    # An even whole number of points with a whole `px_per_unit` renders
+    # every frame at the size declared to the encoder (`check_frame_scale`).
     theme.size = map(x -> 2.0 * max(1, round(Int, x / 2)), theme.size[])
     return theme
 end
 
-function save_animation(render, stem::AbstractString; run_id::AbstractString = "")
+function save_animation(
+    render,
+    stem::AbstractString;
+    run_id::AbstractString = "",
+    px_per_unit::Real = ANIMATION_PX_PER_UNIT,
+)
+    check_frame_scale(px_per_unit)
     mkpath(dirname(stem))
     path = "$stem.gif"
     backup_existing!(path)
@@ -810,13 +816,24 @@ function save_animation(render, stem::AbstractString; run_id::AbstractString = "
                 "run_id" => run_id,
                 "files" => [basename(path)],
                 "frame_px" => [w, h],
-                "px_per_unit" => ANIMATION_PX_PER_UNIT,
+                "px_per_unit" => px_per_unit,
                 "bytes" => filesize(path),
             ),
         ),
     )
     return path
 end
+
+"""
+    episode_starts(alarm, window_index) -> Vector{Int}
+
+Positions of the first window of every alarm episode: maximal runs of
+`true` in `alarm` over windows consecutive in `window_index` (strictly
+increasing), so that a window missing from the table ends an episode
+([`contiguous_runs`](@ref)).
+"""
+episode_starts(alarm::AbstractVector{Bool}, window_index::AbstractVector{<:Integer}) =
+    first.(contiguous_runs(alarm, window_index))
 
 function animate_mission_replay(
     windows::DataFrame,
@@ -841,15 +858,15 @@ function animate_mission_replay(
     max_points >= 2 || throw(ArgumentError("max_points must be at least 2."))
     n = nrow(windows)
     n >= 2 || throw(ArgumentError("the replay holds fewer than two windows."))
-    for column in ("content_end", "complete_at", "coverage", "score", "decision")
+    for column in ("window", "content_end", "complete_at", "coverage", "score", "decision")
         column in names(windows) ||
             throw(ArgumentError("the windows table lacks the column $column."))
     end
-    # Mission order is the axis of every panel; permuting once makes window
-    # adjacency, which defines an alarm episode, index adjacency.
-    days = [days_since(epoch, t) for t in windows.content_end]
-    perm = sortperm(days)
-    content_day = days[perm]
+    # Mission order is the axis of every panel; an alarm episode is a run of
+    # alarmed windows consecutive in window index, as in alert_latency_table.
+    perm = sortperm(Int.(windows.window))
+    window_index = Int.(windows.window[perm])
+    content_day = [days_since(epoch, windows.content_end[i]) for i in perm]
     scored = scored_at(windows)
     arrival_day = [days_since(epoch, scored[i]) for i in perm]
     latency_h = 24 .* (arrival_day .- content_day)
@@ -857,10 +874,7 @@ function animate_mission_replay(
     score = Float64.(windows.score[perm])
     alarm = Int.(windows.decision[perm]) .== 1
     alarm_idx = findall(alarm)
-    # Reveal order: the order in which the windows became evaluable. A pass
-    # delivers its backlog newest first and a window becomes evaluable only
-    # once the conditioning stretch around it has landed, so an arrival prefix
-    # need not be a prefix in mission time.
+    # Reveal order: the order in which the windows were scored.
     arrival_order = sortperm(arrival_day)
     reveal_rank = Vector{Int}(undef, n)
     reveal_rank[arrival_order] = 1:n
@@ -868,7 +882,7 @@ function animate_mission_replay(
     show_idx = sort(unique(vcat(collect(decimation(n, max_points)), n, alarm_idx)))
     show_day = content_day[show_idx]
     alarm_day = content_day[alarm_idx]
-    n_episodes = max(count(alarm .& .!vcat(false, alarm[1:(end-1)])), 1)
+    n_episodes = max(length(episode_starts(alarm, window_index)), 1)
     t_lo, t_hi = extrema(content_day)
     t_pad = 0.01 * max(t_hi - t_lo, 1e-6)
     lat_lo, lat_hi = extrema(latency_h)
@@ -913,10 +927,9 @@ function animate_mission_replay(
                 lat_y[] = [received[i] ? latency_h[i] : NaN for i in show_idx]
                 alarm_y[] = [received[i] ? score[i] : NaN for i in alarm_idx]
                 # Episodes among the windows received so far: a run of alarmed
-                # windows adjacent in mission index counts once, and an arrival
-                # that fills the hole between two runs merges them.
-                raised = received .& alarm
-                starts = findall(raised .& .!vcat(false, raised[1:(end-1)]))
+                # windows consecutive in window index counts once, and an
+                # arrival that fills the hole between two runs merges them.
+                starts = episode_starts(received .& alarm, window_index)
                 edge_lo, edge_hi = extrema(content_day[received])
                 points = Vector{Point2f}(undef, length(starts) + 2)
                 points[1] = Point2f(edge_lo, 0)
@@ -936,18 +949,7 @@ function animate_mission_replay(
             end
         reveal!(1)
 
-        span_handle = nothing
-        if label_spans !== nothing
-            for (a, b) in label_spans
-                p = vspan!(
-                    ax_score,
-                    days_since(epoch, a),
-                    days_since(epoch, b);
-                    color = (FIGURE_COLORS.label, 0.25),
-                )
-                span_handle === nothing && (span_handle = p)
-            end
-        end
+        span_handle = shade_spans!(ax_score, label_spans, epoch)
         clock_handle = nothing
         for ax in panels
             p = vlines!(
@@ -998,23 +1000,17 @@ function animate_mission_replay(
             fontsize = ANNOTATION_FONTSIZE,
             color = FIGURE_COLORS.threshold,
         )
-        # A year of daily passes packs the latency sawtooth into a few pixels
-        # per period, so the trace is drawn light enough to read as a band
+        # Over many passes the latency sawtooth packs into a few pixels per
+        # period; the trace is drawn light enough to read as a band
         lines!(ax_lat, show_day, lat_y; color = (FIGURE_COLORS.fit, 0.85), linewidth = 2)
 
-        handles = Any[]
-        labels = String[]
-        for (h, l) in (
+        handles, labels = legend_from((
             (span_handle, span_label),
             (score_handle, score_name),
             (alarm_handle, "Alarm"),
             (threshold_handle, "Threshold $(round(threshold; digits = 3))"),
             (clock_handle, "Ground clock"),
-        )
-            h === nothing && continue
-            push!(handles, h)
-            push!(labels, l)
-        end
+        ))
         Legend(figure[1, 1], handles, labels; LEGEND_STYLE..., nbanks = 2)
         rowgap!(figure.layout, 10)
         # The coverage and episode panels are strips: one flat trace and one

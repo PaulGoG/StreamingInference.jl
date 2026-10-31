@@ -1,7 +1,8 @@
 # StreamingInference.jl
 
-Windowed analysis of a time series that is delivered in batches: late, out
-of order, and with permanent holes. The package keeps track of which part
+StreamingInference.jl analyses, window by window, a time series that is
+delivered in batches: late, out of order, and with permanent holes. The
+package keeps track of which part
 of the record is on the ground, schedules each window once the stretch
 around it has arrived, conditions it by high-pass filtering and by
 whitening with a given noise power spectral density (PSD) or with a causal
@@ -9,9 +10,10 @@ estimate of it, and passes it to an estimator. Evaluation acts on what the
 estimator returns: thresholds chosen on a calibration block, event-level
 metrics, false-alarm rates and alert latencies.
 
-The estimator is supplied by the user. Nothing in the package depends on a
-physical domain or on a particular method; a detector score, a parameter
-estimate or a forecast plug into the same chain.
+The estimator is supplied by the user: the replay runs any scorer that
+returns one value per window ([`AbstractWindowScorer`](@ref)). Apart from
+the column and batch names noted in the README, nothing in the package
+depends on a physical domain.
 
 A record may hold several synchronous channels. The payload is then a
 matrix with one column per channel, every batch delivers all channels
@@ -28,19 +30,20 @@ builds on it the gravitational-wave layer for the Laser Interferometer
 Space Antenna (LISA), and
 [MilliHertzQML.jl](https://github.com/PaulGoG/MilliHertzQML.jl), a
 variational quantum classifier, builds on both. It requires Julia 1.13 or
-later and is not registered; its first release is 0.1.0 (tag `v0.1.0`,
-15 October 2026), and an environment adds it by URL at the tag or
+later and is not registered; its current release is 0.2.0 (tag `v0.2.0`,
+31 October 2026), and an environment adds it by URL at the tag or
 following `main`:
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.1.0")  # the release
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.2.0")  # the release
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")                  # main
 ```
 
 The figures need `CairoMakie` in the same environment; the runs of the
 telemetry simulator DeepSpaceTelemetry.jl, unregistered as well, open once
-its version 2.6 or later is loaded too ([DeepSpaceTelemetry runs](@ref)).
+its reader package DeepSpaceTelemetryReader 3.1 is loaded too, alone or
+through DeepSpaceTelemetry ([DeepSpaceTelemetry runs](@ref)).
 
 ## Layout of the package
 
@@ -52,6 +55,7 @@ its version 2.6 or later is loaded too ([DeepSpaceTelemetry runs](@ref)).
 | Features and labels | `extract_features`, `window_features`, `window_labels`, `finite_stretches`, `window_indices`, `fixed_spans`, `span_labels`, `chronological_split` |
 | Evaluation | `roc_curve`, `roc_auc`, `contiguous_runs`, `event_metrics`, `threshold_sweep`, `select_threshold` |
 | Configuration and provenance | `load_config`, `cfgget`, `section`, `with_pipeline_root`, `config_root`, `project_root`, `resolvepath`, `provenance`, `git_provenance`, `layer_provenance`, `hardware_fingerprint`, `parameter_digest`, `content_digest`, `product_table`, `recorded_channels` |
+| Stage helpers | `sidecar_path`, `feature_geometry`, `FeatureMap(features_path)`, `gapped_product`, `run_channels`, `load_threshold`, `block_rows`, `block_metrics`, `metrics_dict`, `print_block_summary`, `fixed`, `credited_span_label`, `credited_span_times`, `config_argument`, `with_file_log` |
 | Figures (CairoMakie extension) | `figure_theme`, `save_figure`, `figure_roc`, `figure_threshold_sweep`, `figure_sensitivity`, `figure_score_distribution`, `figure_telemetry_alerts`, `animate_mission_replay` |
 
 ## Example

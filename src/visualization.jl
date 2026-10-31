@@ -66,14 +66,13 @@ end
 """
     FIGURE_COLORS
 
-Semantic colours shared by every figure of the project (Okabe–Ito palette),
-each with a single use: `data` (scores, time series, measured
-points), `label` (labelled spans), `threshold` (the decision threshold,
-black, dashed in every figure), `training` and `validation` (the two
-blocks), `noise` and `signal` (score distributions, and the detected-event
-markers), `fit` (fitted or model curves), `false_alarm` (the false-alarm
-rate wherever it is drawn), `target` (a requested or reference rate: the
-`far` target, the `1 / stretch` rule).
+Semantic colours shared by every figure of the project (Okabe–Ito palette):
+`data` (scores, time series, measured points), `label` (labelled spans),
+`threshold` (the decision threshold, black, dashed in every figure),
+`training` and `validation` (the two blocks), `noise` and `signal` (score
+distributions, and the detected-event markers), `fit` (fitted or model
+curves), `false_alarm` (the false-alarm rate wherever it is drawn),
+`target` (a requested or reference rate, such as the `far` target).
 """
 const FIGURE_COLORS = (
     data = "#0072B2",
@@ -141,27 +140,30 @@ to be loaded.
 function animation_theme end
 
 """
-    save_animation(render, stem; run_id = "") -> String
+    save_animation(render, stem; run_id = "", px_per_unit = ANIMATION_PX_PER_UNIT) -> String
 
 Write the animation `<stem>.gif` by calling `render(path)` with that path
 and write the provenance sidecar `<stem>.toml` (run identifier, `frame_px`,
 the pixel size of the written GIF, `px_per_unit`, file size, git
 description, hardware fingerprint, time), as [`save_figure`](@ref) does for
-a static figure. An existing GIF is backed up first. Returns the written
-path. Requires CairoMakie to be loaded.
+a static figure. `px_per_unit` is the raster scale the renderer used and
+is recorded as given ([`check_frame_scale`](@ref)). An existing GIF is
+backed up first. Returns the written path. Requires CairoMakie to be
+loaded.
 
 # Example
 
 ```julia
-save_animation(joinpath(plot_dir, "training_history"); run_id = run_id) do path
-    animate_training_history(history, path)
+save_animation(joinpath(plot_dir, "mission_replay"); run_id = run_id) do path
+    animate_mission_replay(windows, threshold, path)
 end
 ```
 """
 function save_animation end
 
 """
-    animate_mission_replay(windows, threshold, path; epoch, label_spans = nothing,
+    animate_mission_replay(windows, threshold, path;
+                           epoch = minimum(windows.content_end), label_spans = nothing,
                            span_label = "Labelled span", score_label = "Score",
                            score_name = "Window score", score_range = nothing,
                            n_frames = 200, framerate = 20, hold_frames = 20,
@@ -176,21 +178,24 @@ window coverage, the window score (axis `score_label`, legend entry
 threshold widened by 5 %) with the decision `threshold` as a dashed
 rule, the alarmed windows marked, and the spans alerts are credited to
 (`label_spans`, pairs of `DateTime`, named `span_label` in the legend)
-shaded, the count of alarm episodes accumulated along
-mission time, and the availability latency of every window (`complete_at −
-content_end` [h]: the wait for its conditioning stretch and the downlink
-delay of the batch that completes it).
+shaded, the count of alarm episodes accumulated along mission time (an
+episode is a run of alarmed windows consecutive in window index, as in
+[`alert_latency_table`](@ref)), and the availability latency of every
+window (`scored_at − content_end` [h], [`scored_at`](@ref): `complete_at`,
+or `release_at` for a stateful scorer; the wait for its conditioning
+stretch and the downlink delay of the batch that completes it).
 
-The windows are revealed in arrival order, sorted by `complete_at`, not in
-mission-time order: a pass delivers its backlog newest first and a window
-becomes evaluable only once the conditioning stretch around it has landed,
-so the trace fills in wherever windows have become evaluable rather than
-from left to right. A dotted rule marks the ground clock, whose distance to
-the data edge is the availability latency. The sweep takes about `n_frames`
-frames and the traces are decimated to about `max_points` windows, the
-alarmed ones always kept. `windows` is the table of `replay_run`, `path`
-must name a GIF, the only file written. Returns `path`. Requires CairoMakie
-to be loaded.
+The windows are revealed in the order they were scored
+([`scored_at`](@ref)): a pass delivers its backlog newest first and a
+window becomes evaluable only once the conditioning stretch around it has
+landed, so the trace fills in wherever windows have become evaluable. A
+dotted rule marks the ground clock, whose distance to the data edge is
+the availability latency. The sweep takes about `n_frames` frames and the
+traces are decimated to about `max_points` windows, the alarmed ones
+always kept. `windows` is the table of `replay_run` (its `window`,
+`content_end`, `complete_at`, `coverage`, `score` and `decision` columns
+are required), `path` must name a GIF, the only file written. Returns
+`path`. Requires CairoMakie to be loaded.
 """
 function animate_mission_replay end
 
@@ -231,7 +236,7 @@ positive window exists. Requires CairoMakie.
 function figure_sensitivity end
 
 """
-    figure_score_distribution(probabilities, threshold; labels = nothing, n_bins = 50,
+    figure_score_distribution(scores, threshold; labels = nothing, n_bins = 50,
                               score_label = "Score", score_range = nothing) -> Figure
 
 Histogram of the window scores, split into noise and labelled windows
@@ -254,7 +259,8 @@ or the range of the scores and the threshold widened by 5 %) with the
 decision threshold, alarmed windows marked, and the spans alerts are
 credited to (`label_spans`, pairs of `DateTime`, named `span_label` in the
 legend) shaded; below, the ground-availability latency of every window
-(`complete_at − content_end` [h]) with the alert latencies of the detected
+(`scored_at − content_end` [h], [`scored_at`](@ref): `complete_at`, or
+`release_at` for a stateful scorer) with the alert latencies of the detected
 events (`latencies`, the table of `alert_latency_table`, their event times
 named `event_label`) annotated, and, when the table has the confirmation
 tier, the confirmation latency of every confirmed event as a hollow marker.

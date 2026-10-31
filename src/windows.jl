@@ -34,19 +34,8 @@ function finite_stretches(columns::AbstractVector{<:Real}...; shortest::Integer 
     all(c -> length(c) == n, columns) ||
         throw(DimensionMismatch("the columns differ in length."))
     shortest >= 1 || throw(ArgumentError("shortest = $shortest; must be at least 1."))
-    stretches = UnitRange{Int}[]
-    start = 0
-    for i in 1:n
-        finite = all(c -> isfinite(c[i]), columns)
-        if finite && start == 0
-            start = i
-        elseif !finite && start != 0
-            i - start >= shortest && push!(stretches, start:(i-1))
-            start = 0
-        end
-    end
-    start != 0 && n - start + 1 >= shortest && push!(stretches, start:n)
-    return stretches
+    finite = [all(c -> isfinite(c[i]), columns) for i in 1:n]
+    return filter(r -> length(r) >= shortest, contiguous_runs(finite))
 end
 
 """
@@ -61,9 +50,8 @@ function edge_margin_windows(settings::NamedTuple)
 end
 
 """
-    window_features(A, fs; window_size, step_size, low_band, high_band,
-                    band_edges = [1e-3, 5e-3, 1e-1], feature_set,
-                    combination = :mean) -> Matrix{Float32}
+    window_features(A, fs; window_size, step_size, low_band, high_band, band_edges,
+                    feature_set, combination = :mean) -> Matrix{Float32}
 
 Feature matrix of the sliding windows of the (whitened) record `A` sampled
 at `fs` [Hz]: one row per window of `window_size` samples advancing by
@@ -81,7 +69,7 @@ function window_features(
     step_size::Integer,
     low_band::Tuple{Real,Real},
     high_band::Tuple{Real,Real},
-    band_edges::AbstractVector{<:Real} = [1e-3, 5e-3, 1e-1],
+    band_edges::AbstractVector{<:Real},
     feature_set::Symbol,
     combination::Symbol = :mean,
 )

@@ -1,14 +1,12 @@
-# ext/StreamingInferenceDeepSpaceTelemetryExt.jl — a DeepSpaceTelemetry run
-# directory as a run of the consumer, through the producer's reference run
-# adapter (RunAdapter), which is versioned with the run-directory contract,
-# so that a change of the contract surfaces as a version bump rather than as
-# silent format drift. The consumer only reads.
-module StreamingInferenceDeepSpaceTelemetryExt
+# ext/StreamingInferenceDeepSpaceTelemetryReaderExt.jl — a DeepSpaceTelemetry
+# run directory as a run of the consumer, through the producer's reference
+# run adapter (RunAdapter of DeepSpaceTelemetryReader, the reader package of
+# DeepSpaceTelemetry), which is versioned with the run-directory contract,
+# so that a change of the contract changes its version. The consumer only
+# reads.
+module StreamingInferenceDeepSpaceTelemetryReaderExt
 
-using DeepSpaceTelemetry: DeepSpaceTelemetry
-using DeepSpaceTelemetry.RunAdapter: RunAdapter
-using CSV: CSV
-using DataFrames: DataFrame
+using DeepSpaceTelemetryReader: RunAdapter
 using TOML: TOML
 using StreamingInference:
     AbstractTelemetryRun,
@@ -40,74 +38,13 @@ import StreamingInference:
 
 A DeepSpaceTelemetry run directory opened read-only: the producer's run
 handle, the [`RunGeometry`](@ref) of the consumer, the indices of the
-payload columns served and whether they are served as a matrix, whether
-the producer stamps the payload row of each batch (2.1.0 and later), and
-whether it writes the declared-hole feed (2.6.0 and later).
+payload columns served and whether they are served as a matrix.
 """
 struct DeepSpaceTelemetryRun <: AbstractTelemetryRun
     handle::RunAdapter.RunHandle
     geometry::RunGeometry
     columns::Vector{Int}
     as_matrix::Bool
-    stamped::Bool
-    hole_feed::Bool
-end
-
-"""
-    producer_at_least(version, floor) -> Bool
-
-Whether the recorded producer `version` is `floor` or later; false for a
-run that records no version or an unparsable one.
-"""
-function producer_at_least(version::AbstractString, floor::VersionNumber)
-    v = tryparse(VersionNumber, version)
-    return v !== nothing && v >= floor
-end
-
-"""
-    check_payload_alignment(run_dir, config, version)
-
-Refuses an external-payload run of DeepSpaceTelemetry 2.0.1 or earlier
-that holds a scheduled generation gap or an emitter restart. Those
-producers read the payload sequentially: after a `SCHEDULED` gap the
-content epoch jumps to the gap end while the payload resumes where it
-stopped, and a restarted emitter reads it again from row 1, so every later
-batch carries rows other than those of its content epoch. Fixed in
-DeepSpaceTelemetry 2.1.0; a run of unknown version is treated as affected.
-"""
-function check_payload_alignment(run_dir::AbstractString, config::AbstractDict, version)
-    physics = get(config, "physics", Dict{String,Any}())
-    get(physics, "data_source", "synthetic") == "external" || return nothing
-    producer_at_least(version, v"2.1.0") && return nothing
-    first_affected = nothing
-    tx = joinpath(run_dir, "events_tx.csv")
-    if isfile(tx)
-        table = CSV.read(tx, DataFrame; types = String)
-        for row in eachrow(table)
-            row.Batch in ("SCHEDULED", "STREAM") && row.Event == "gap_start" || continue
-            first_affected = something(first_affected, row.SimTime)
-            break
-        end
-    end
-    components = joinpath(run_dir, "component_events.csv")
-    if isfile(components)
-        table = CSV.read(components, DataFrame; types = String)
-        for row in eachrow(table)
-            row.Component == "emitter" && row.Event == "restart" || continue
-            first_affected =
-                first_affected === nothing ? row.SimTime : min(first_affected, row.SimTime)
-            break
-        end
-    end
-    first_affected === nothing && return nothing
-    throw(
-        ArgumentError(
-            "$run_dir is an external-payload run of DeepSpaceTelemetry $version with a " *
-            "generation gap or an emitter restart (first at $first_affected); producers " *
-            "up to 2.0.1 misplace the payload from that instant on. Regenerate the run " *
-            "with DeepSpaceTelemetry 2.1.0 or later.",
-        ),
-    )
 end
 
 """
@@ -146,17 +83,18 @@ end
 
 function open_telemetry_run(
     run_dir::AbstractString;
-    producer_compat::AbstractString = "1.0",
+    producer_compat::AbstractString = "2.6",
     columns::Union{Nothing,AbstractString,AbstractVector{<:AbstractString}} = nothing,
 )
     isdir(run_dir) || throw(ArgumentError("run directory not found: $run_dir"))
-    floor = tryparse(VersionNumber, producer_compat)
-    floor === nothing &&
+    requested = tryparse(VersionNumber, producer_compat)
+    requested === nothing &&
         throw(ArgumentError("producer_compat = $(repr(producer_compat)) is not a version."))
+    # The adapter reads the declared-hole feed and the payload-row stamps,
+    # which producers before 2.6.0 lack: its own floor binds below it.
+    floor = max(requested, RunAdapter.MINIMUM_PRODUCER_VERSION)
     handle = RunAdapter.open_run(String(run_dir); minimum_version = floor)
     g = RunAdapter.run_geometry(handle)
-    version = g.package_version
-    check_payload_alignment(handle.run_dir, handle.config, version)
     # Rows are counted from the mission epoch, as the payload export writes
     # them; a producer that anchors payload row 1 elsewhere (an initial
     # downtime) would shift every row against the event tables.
@@ -175,17 +113,10 @@ function open_telemetry_run(
         g.segment_duration_sec,
         g.batch_size,
         g.start_sim_time,
-        isempty(version) ? "unknown" : version;
+        isempty(g.package_version) ? "unknown" : g.package_version;
         payload_rows = something(g.payload_rows, 0),
     )
-    return DeepSpaceTelemetryRun(
-        handle,
-        geometry,
-        indices,
-        as_matrix,
-        producer_at_least(version, v"2.1.0"),
-        producer_at_least(version, v"2.6.0"),
-    )
+    return DeepSpaceTelemetryRun(handle, geometry, indices, as_matrix)
 end
 
 # The names only: no version floor, since nothing of the run is served
@@ -202,39 +133,23 @@ record_final(run::DeepSpaceTelemetryRun) = RunAdapter.record_final(run.handle)
 """
     consumer_record(run, record::RunAdapter.BatchRecord) -> BatchRecord
 
-The consumer's record of a batch. A producer from 2.1.0 stamps the payload
-row of every batch, which must agree with its content epoch. Before, the
-rows follow the content epoch: reconstructing them from the index is only
-correct while the producer stores every batch it produces, and when its
-recorder overflowed it discarded production and kept numbering what it
-stored, so the index drifts behind the content.
+The consumer's record of a batch: the payload rows the producer stamps on
+it, which must agree with its content epoch.
 """
 function consumer_record(run::DeepSpaceTelemetryRun, r::RunAdapter.BatchRecord)
     g = run.geometry
-    P = g.points_per_batch
-    epoch = ismissing(r.content_epoch) ? nothing : r.content_epoch
     rows = r.rows
-    if run.stamped
-        first(rows) >= 1 ||
-            throw(ArgumentError("batch $(r.name) carries payload_row $(first(rows))."))
-        epoch === nothing ||
-            time_row(g, epoch) == first(rows) ||
-            throw(
-                ArgumentError(
-                    "batch $(r.name) carries payload_row $(first(rows)) but content " *
-                    "epoch $epoch, which is row $(time_row(g, epoch)).",
-                ),
-            )
-    elseif epoch !== nothing
-        row0 = time_row(g, epoch)
-        if row0 >= 1
-            rows = row0:(row0+P-1)
-        else
-            @warn "a batch is stamped before the mission epoch; falling back to its " *
-                  "index for the payload rows." batch = r.name content_epoch = epoch
-            rows = batch_rows(r.index, P)
-        end
-    end
+    first(rows) >= 1 ||
+        throw(ArgumentError("batch $(r.name) carries payload_row $(first(rows))."))
+    epoch = ismissing(r.content_epoch) ? nothing : r.content_epoch
+    epoch === nothing ||
+        time_row(g, epoch) == first(rows) ||
+        throw(
+            ArgumentError(
+                "batch $(r.name) carries payload_row $(first(rows)) but content " *
+                "epoch $epoch, which is row $(time_row(g, epoch)).",
+            ),
+        )
     return BatchRecord(
         r.name,
         r.index,
@@ -258,13 +173,11 @@ function list_batches(run::DeepSpaceTelemetryRun)
     return records
 end
 
-# A live consumer resolves the batches its fresh arrivals name: one metadata
-# read each where the producer stamps the payload row, a listing otherwise.
+# A live consumer resolves the batches its fresh arrivals name, one metadata
+# read each.
 function batch_records(run::DeepSpaceTelemetryRun, names)
-    wanted = unique(String.(collect(names)))
-    run.stamped || return filter(b -> b.name in Set(wanted), list_batches(run))
     records = BatchRecord[]
-    for name in wanted
+    for name in unique(String.(collect(names)))
         parsed = try
             parse_batch_name(name)
         catch e
@@ -304,26 +217,16 @@ function arrival_events(run::DeepSpaceTelemetryRun)
     return events
 end
 
-# From 2.6.0 the producer's declared-hole feed; before, the holes its event
-# logs declare (the generation gaps; the arrival feed carries the lost and
-# pruned batches), each known from the end of the gap.
+# The producer's declared-hole feed, each hole known from the instant it
+# was declared
 function declared_holes(run::DeepSpaceTelemetryRun; after::Integer = 0)
-    holes = if run.hole_feed
-        RunAdapter.declared_holes(run.handle; after = after)
-    else
-        tracked = filter(
-            h -> !(h.cause in (:lost, :pruned)),
-            RunAdapter.declare!(RunAdapter.GapTracker(run.handle)),
-        )
-        tracked[(max(after, 0)+1):end]
-    end
     return [
         DeclaredHole(
             hole_cause(h.cause),
             ismissing(h.batch) ? nothing : h.batch,
             h.rows,
             coalesce(h.declared_at, h.content_end),
-        ) for h in holes
+        ) for h in RunAdapter.declared_holes(run.handle; after = after)
     ]
 end
 

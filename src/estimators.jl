@@ -6,11 +6,13 @@
 """
     AbstractWindowEstimator
 
-A method applied to one conditioned window of a time series (a detector
-score, a parameter estimate, a posterior summary, a forecast). The chain
-around it — delivery, gaps, window scheduling, conditioning, calibration,
-evaluation — does not depend on the method. Concrete estimators declare
-their memory with [`estimator_memory`](@ref).
+A method applied to one conditioned window of a time series. Its one
+subtype so far is [`AbstractWindowScorer`](@ref), the scalar score per
+window that the replay ([`StreamingDetector`](@ref)), the thresholds and
+the alert tables act on; the supertype is reserved for estimators whose
+output is not a scalar, which no replay drives yet. The defaults of the
+memory trait ([`estimator_memory`](@ref)), of [`reset_estimator!`](@ref)
+and of [`estimator_gap!`](@ref) are defined on it.
 """
 abstract type AbstractWindowEstimator end
 
@@ -91,16 +93,32 @@ Range of the score; `(0.0, 1.0)` unless a scorer declares otherwise.
 score_bounds(::AbstractWindowScorer) = (0.0, 1.0)
 
 """
-    FeatureMap(; feature_set = :whitened, low_band = (1e-3, 5e-3),
-               high_band = (5e-3, 1e-1), band_edges = [1e-3, 5e-3, 1e-1],
+    FeatureMap(; feature_set = :whitened, low_band, high_band, band_edges,
                combination = :mean)
+    FeatureMap(features_path)
 
 The spectral features of a conditioned window ([`extract_features`](@ref)):
-the feature set and its analysis bands [Hz]. `band_edges` is validated
+the feature set and its analysis bands [Hz] `low_band`, `high_band` and
+`band_edges`, which have no default. `band_edges` is validated
 ([`check_band_edges`](@ref)) for every set, as the conditioning of a run
-records it, and used only by the `:bands` set. `combination` says how the
-channels of a multichannel window enter ([`CHANNEL_COMBINATIONS`](@ref))
-and has no effect on a single channel.
+records it, and used only by the `:bands` set.
+`combination` says how the channels of a multichannel window enter
+([`CHANNEL_COMBINATIONS`](@ref)) and has no effect on a single channel.
+
+`FeatureMap(features_path)` reads the map a feature table was made with
+from the `[features]` table of its sidecar ([`sidecar_path`](@ref)), as
+[`feature_geometry`](@ref) reads its window geometry: `low_band_hz`,
+`high_band_hz` and `band_edges_hz` (required), `feature_set` (default
+`"whitened"`) and `channel_combination` (default `"mean"`). Throws an
+`ArgumentError` without a sidecar or without a band key.
+
+# Example
+
+```julia
+features = FeatureMap(; low_band = (1e-3, 5e-3), high_band = (5e-3, 1e-1),
+                      band_edges = [1e-3, 5e-3, 1e-1])
+extract_features(features, window, sample_rate)
+```
 """
 struct FeatureMap
     feature_set::Symbol
@@ -110,9 +128,9 @@ struct FeatureMap
     combination::Symbol
     function FeatureMap(;
         feature_set::Symbol = :whitened,
-        low_band::Tuple{Real,Real} = (1e-3, 5e-3),
-        high_band::Tuple{Real,Real} = (5e-3, 1e-1),
-        band_edges::AbstractVector{<:Real} = [1e-3, 5e-3, 1e-1],
+        low_band::Tuple{Real,Real},
+        high_band::Tuple{Real,Real},
+        band_edges::AbstractVector{<:Real},
         combination::Symbol = :mean,
     )
         feature_set in FEATURE_SETS || throw(
@@ -131,6 +149,29 @@ struct FeatureMap
             combination,
         )
     end
+end
+
+function FeatureMap(features_path::AbstractString)
+    sidecar = sidecar_path(features_path)
+    isfile(sidecar) || throw(ArgumentError("feature sidecar not found: $sidecar"))
+    features = get(TOML.parsefile(sidecar), "features", Dict{String,Any}())
+    for key in ("low_band_hz", "high_band_hz", "band_edges_hz")
+        haskey(features, key) ||
+            throw(ArgumentError("the sidecar $sidecar does not record $key."))
+    end
+    low = analysis_band(features, "low_band_hz", nothing)
+    high = analysis_band(features, "high_band_hz", nothing)
+    edges =
+        check_band_edges(cfgget(features, "band_edges_hz", nothing; type = AbstractVector))
+    return FeatureMap(;
+        feature_set = Symbol(cfgget(features, "feature_set", "whitened"; type = String)),
+        low_band = low,
+        high_band = high,
+        band_edges = edges,
+        combination = Symbol(
+            cfgget(features, "channel_combination", "mean"; type = String),
+        ),
+    )
 end
 
 """
@@ -181,7 +222,8 @@ the coverage bound admits, fell in a lost or pruned batch), `:undelivered`
 (not delivered by the end of the record), `:horizon` (not delivered
 within the order horizon while later windows were waiting), or the cause
 of a hole the producer declared over those rows (`:stream`, `:scheduled`,
-`:recorder`, `:not_generated`, `:other`; [`DeclaredHole`](@ref)).
+`:recorder`, `:undelivered`, `:not_generated`, `:other`;
+[`DeclaredHole`](@ref)).
 """
 struct GapEvent
     first_window::Int

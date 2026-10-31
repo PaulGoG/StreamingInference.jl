@@ -28,8 +28,8 @@ the root set by [`with_pipeline_root`](@ref); the environment variable
 `STREAMINGINFERENCE_ROOT`; the nearest directory above the active
 environment whose `Project.toml` declares a package (the `scripts/`,
 `test/`, `docs/` and `bench/` environments of a pipeline resolve to its
-repository). Throws an `ArgumentError` when none applies, rather than
-resolving against the directory of an installed package.
+repository). Throws an `ArgumentError` when none applies; the directory of
+an installed package is never taken as the root.
 """
 function project_root()
     root = PIPELINE_ROOT[]
@@ -80,13 +80,45 @@ function config_root(path::AbstractString)
     paths = section(load_config(file), "paths")
     if haskey(paths, "root")
         root = cfgget(paths, "root", "."; type = String)
-        resolved = normpath(isabspath(root) ? root : joinpath(dirname(file), root))
-        # `normpath` keeps the separator after a trailing `..`
-        parent, last = splitdir(resolved)
-        return isempty(last) && length(resolved) > 1 ? parent : resolved
+        return normdir(isabspath(root) ? root : joinpath(dirname(file), root))
     end
     found = ancestor_with_project(dirname(file))
     return found === nothing ? project_root() : found
+end
+
+"""
+    normdir(path) -> String
+
+`normpath(path)` without a trailing separator, which `normpath` keeps
+after a trailing `..`; the root directory keeps its separator.
+"""
+function normdir(path::AbstractString)
+    normalised = normpath(path)
+    return isempty(basename(normalised)) && length(normalised) > 1 ? dirname(normalised) :
+           normalised
+end
+
+"""
+    config_argument(default; args = ARGS) -> String
+
+The configuration file a script was given: the first of the command-line
+`args` that is not an option (does not start with `-`) and names a TOML
+file (ends in `.toml`), wherever it stands among the options, or
+`default` when there is none. A script runs its stage in the root of that
+file:
+
+```julia
+with_pipeline_root(main, config_root(config_argument(DEFAULT_CONFIG)))
+```
+"""
+function config_argument(
+    default::AbstractString;
+    args::AbstractVector{<:AbstractString} = ARGS,
+)
+    for arg in args
+        (!startswith(arg, "-") && endswith(arg, ".toml")) && return String(arg)
+    end
+    return String(default)
 end
 
 """
@@ -117,10 +149,9 @@ end
 
 `p` as recorded in a provenance snapshot: relative to
 [`project_root`](@ref) when it lies inside it, and otherwise its file
-name alone. A path outside the pipeline root belongs to the machine that
-ran the stage, not to the run, and carries the account name and the
-directory layout of that machine into artifacts that are meant to be
-published; the file name is what identifies the input. Use
+name alone. A path outside the pipeline root would carry the account name
+and the directory layout of the machine that ran the stage into
+published artifacts; the file name identifies the input. Use
 [`rootrelative`](@ref) instead wherever the recorded path is read back
 and resolved rather than only reported.
 """
@@ -265,7 +296,8 @@ end
 Validated `[inference]` parameters: feature and label tables, block
 selection (`"all"`, or a block named in the split of the scored run,
 [`check_block`](@ref)), and the window geometry used when a feature table
-has no sidecar.
+has no sidecar. `features` is resolved against the pipeline root;
+`labels` is returned as given, and an empty value means no labels.
 """
 function inference_settings(config::AbstractDict)
     i = section(config, "inference")
@@ -281,22 +313,41 @@ function inference_settings(config::AbstractDict)
 end
 
 """
-    feature_geometry(features_path, config) -> NamedTuple
+    sidecar_path(table_path) -> String
+
+Path of the TOML sidecar of a CSV product: `<stem>.toml` beside
+`<stem>.csv`. A path that does not end in `.csv` is returned unchanged.
+
+# Example
+
+```julia
+sidecar_path("data/inputs/train_features.csv")   # "data/inputs/train_features.toml"
+```
+"""
+sidecar_path(table_path::AbstractString) = replace(table_path, r"\.csv$" => ".toml")
+
+"""
+    feature_geometry(features_path, config; fallback = "preprocessing") -> NamedTuple
 
 Window geometry (`window_size`, `step_size`, `sample_rate`, and
 `first_window`, the record window index of the table's first row, above 1
 when an edge margin was dropped) of a feature table, read from the
-sidecar `<stem>.toml` written beside it by the pre-processor; falls back
-to the `[preprocessing]` section with a warning when the sidecar is
-absent.
+`[features]` table of its sidecar ([`sidecar_path`](@ref)) written by the
+pre-processor. When the sidecar is absent the geometry is read from the
+section `fallback` of `config`, with a warning: `[preprocessing]` for the
+stage that made the table, `[inference]` for one that scores it.
 """
-function feature_geometry(features_path::AbstractString, config::AbstractDict)
-    sidecar = replace(features_path, r"\.csv$" => ".toml")
-    sec = section(config, "preprocessing")
+function feature_geometry(
+    features_path::AbstractString,
+    config::AbstractDict;
+    fallback::AbstractString = "preprocessing",
+)
+    sidecar = sidecar_path(features_path)
+    sec = section(config, fallback)
     if isfile(sidecar)
         sec = get(TOML.parsefile(sidecar), "features", Dict{String,Any}())
     else
-        @warn "no feature sidecar at $sidecar; window geometry taken from [preprocessing]."
+        @warn "no feature sidecar at $sidecar; window geometry taken from [$fallback]."
     end
     return (
         window_size = cfgget(sec, "window_size", 1000; type = Int, min = 2),
@@ -310,15 +361,16 @@ end
     window_indices(features_path) -> Vector{Int}
 
 Record window index of every row of a feature table, from its sidecar
-`<stem>.toml`: `first_window`, `first_window + 1`, … over `n_windows` rows
-for the product of a record without gaps, and the windows of every stretch
-in turn (`stretches`, a list of tables with `first_window` and
-`n_windows`) for the product of a record with gaps, where the index jumps
-between stretches. `ArgumentError` without a sidecar, without `n_windows`,
-or for stretches that are not in ascending order.
+([`sidecar_path`](@ref)): `first_window`, `first_window + 1`, … over
+`n_windows` rows for the product of a record without gaps, and the
+windows of every stretch in turn (`stretches`, a list of tables with
+`first_window` and `n_windows`) for the product of a record with gaps,
+where the index jumps between stretches. `ArgumentError` without a
+sidecar, without `n_windows`, or for stretches that are not in ascending
+order.
 """
 function window_indices(features_path::AbstractString)
-    sidecar = replace(features_path, r"\.csv$" => ".toml")
+    sidecar = sidecar_path(features_path)
     isfile(sidecar) || throw(ArgumentError("feature sidecar not found: $sidecar"))
     features = get(TOML.parsefile(sidecar), "features", Dict{String,Any}())
     stretches = get(features, "stretches", nothing)

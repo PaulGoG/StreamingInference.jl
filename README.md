@@ -15,8 +15,8 @@ filter and by whitening, with a given noise power spectral density (PSD)
 or with a causal Welch estimate made from delivered data only, passes it
 to an estimator, and evaluates the output: decision thresholds, event-level
 metrics, false-alarm rates and alert latencies. The estimator is a type
-you supply; nothing here depends on a physical domain or on a particular
-method.
+you supply; apart from the names listed under Status, nothing here depends
+on a physical domain or on a particular method.
 
 A record may hold several synchronous channels. The payload is then a
 matrix with one column per channel, every batch delivers all channels
@@ -48,7 +48,7 @@ StreamingInference.jl/
 │   ├── evaluation.jl           # ROC, event metrics, threshold selection
 │   ├── config.jl               # TOML configuration and the pipeline root
 │   └── provenance.jl           # run identifiers, git and hardware provenance, digests
-├── ext/                        # CairoMakie (figures) and DeepSpaceTelemetry (producer runs) extensions
+├── ext/                        # CairoMakie (figures) and DeepSpaceTelemetryReader (producer runs) extensions
 ├── test/                       # suite with static QA, own environment
 └── docs/                       # Documenter manual, own environment
 ```
@@ -63,7 +63,7 @@ environment adds it from this repository, at the release tag or following
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.1.0")  # the release
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.2.0")  # the release
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")                  # main
 ```
 
@@ -71,9 +71,11 @@ The figures need `CairoMakie` in the same environment.
 [DeepSpaceTelemetry.jl](https://github.com/PaulGoG/DeepSpaceTelemetry.jl)
 simulates the telemetry downlink of a spacecraft (ground-station passes,
 packet loss and retransmission, an on-board recorder); its runs open with
-`open_telemetry_run` once DeepSpaceTelemetry 2.6 or later is loaded beside
-this package. It is not registered either:
-`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl")`.
+`open_telemetry_run` once its reader package, DeepSpaceTelemetryReader 3.1,
+is loaded beside this package, alone or through DeepSpaceTelemetry. Neither
+is registered:
+`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl", subdir = "reader")`
+for the reader, without `subdir` for the whole producer.
 
 ## Entry points
 
@@ -128,8 +130,8 @@ and the alert tables.
 
 ## Status
 
-The first release is 0.1.0 (tag `v0.1.0`, 15 October 2026), which
-MilliHertzBase.jl 0.1.0 and MilliHertzQML.jl 3.0.0 pin by commit;
+The current release is 0.2.0 (tag `v0.2.0`, 31 October 2026), which
+MilliHertzBase.jl 0.2.0 and MilliHertzQML.jl 3.1.0 pin by commit;
 install by URL at the tag, or follow `main`. Known limitations, to be
 generalised:
 
@@ -140,7 +142,15 @@ generalised:
   widening of holes `tdi_gap_dilation_sec`, after the time-delay
   interferometry (TDI) of LISA;
 - the default high-pass cutoff of `StreamingDetector` (0.5 mHz) suits the
-  millihertz band of LISA; set it for other series.
+  millihertz band of LISA; set it for other series;
+- `RunGeometry` and `ArrivalEvent` keep the vocabulary of the simulating
+  producer: `package_version` is the producer's version, not the version
+  of the package at the pipeline root that `git_provenance` records under
+  the same name, and `start_sim_time` and `sim_time` are the mission epoch
+  and the mission time;
+- some exported names are generic (`add!`, `remove!`, `holes`, `section`,
+  `override`, `provenance`, `fixed`) and can clash with those of other
+  packages under `using`; import them by name where they do.
 
 ## Full file tree
 
@@ -154,21 +164,23 @@ StreamingInference.jl/
 ├── CHANGELOG.md
 ├── CITATION.cff
 ├── LICENSE
+├── .JuliaFormatter.toml        # JuliaFormatter 2 settings of the formatting check
+├── .gitignore
 ├── src/
 │   ├── StreamingInference.jl   # Module, exported and public names
-│   ├── config.jl               # TOML configuration, pipeline root, path helpers, settings sections
-│   ├── provenance.jl           # Run identifiers, git and hardware provenance, manifests, digests
+│   ├── config.jl               # TOML configuration, pipeline root, path and sidecar helpers, settings sections
+│   ├── provenance.jl           # Run identifiers, file log, git and hardware provenance, manifests, digests
 │   ├── dsp.jl                  # Noise synthesis, periodograms, Welch PSD, smoothing, whitening, high-pass
 │   ├── features.jl             # Band-power features of a window, feature names
 │   ├── spans.jl                # Labelled spans around event samples
-│   ├── evaluation.jl           # ROC, contiguous runs, event metrics, threshold sweep and selection
+│   ├── evaluation.jl           # ROC, contiguous runs, event metrics, thresholds, block metrics of a fitted run
 │   ├── windows.jl              # Window geometry of a record
 │   ├── estimators.jl           # Estimator interface, memory trait, feature map, gap events
 │   ├── visualization.jl        # Figure interface and the shared figure toolkit
 │   └── telemetry.jl            # Run interface, coverage, scheduler, detector, replay, alert tables
 ├── ext/
 │   ├── StreamingInferenceCairoMakieExt.jl  # Theme, exports, evaluation, score and replay figures
-│   └── StreamingInferenceDeepSpaceTelemetryExt.jl  # Producer runs through its reference run adapter
+│   └── StreamingInferenceDeepSpaceTelemetryReaderExt.jl  # Producer runs through the reference run adapter
 ├── test/
 │   ├── Project.toml            # Test environment (package by path, DeepSpaceTelemetry by commit)
 │   ├── activate.jl
@@ -198,7 +210,7 @@ StreamingInference.jl/
 @software{Gogita_StreamingInference_jl,
   author  = {Gogîță, Paul-Adrian},
   title   = {{StreamingInference.jl}},
-  version = {0.1.0},
+  version = {0.2.0},
   url     = {https://github.com/PaulGoG/StreamingInference.jl},
   year    = {2026}
 }

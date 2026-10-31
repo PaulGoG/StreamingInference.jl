@@ -24,6 +24,35 @@ function report_timing(io::IO = stdout)
 end
 
 """
+    with_file_log(f, path)
+
+Run `f()` with every log record of the global logger also written to the
+file at `path` (created or truncated, flushed after each record); the
+global logger is restored and the file closed when `f` returns or throws.
+Returns the value of `f()`. The directory of `path` must exist.
+
+# Example
+
+```julia
+result = with_file_log(joinpath(run_dir, "training.log")) do
+    run_stage(config)
+end
+```
+"""
+function with_file_log(f, path::AbstractString)
+    stream = open(path, "w")
+    console = global_logger()
+    global_logger(TeeLogger(console, FileLogger(stream; always_flush = true)))
+    try
+        return f()
+    finally
+        global_logger(console)
+        flush(stream)
+        close(stream)
+    end
+end
+
+"""
     new_run_id() -> String
 
 Eight-character run identifier drawn from a UUID.
@@ -35,9 +64,8 @@ new_run_id() = string(uuid4())[1:8]
 
 Stable anonymous identifier of the host: the first twelve hexadecimal
 characters of the SHA-256 digest of its name. Two runs on the same
-machine share it and runs on different machines do not, which is what
-provenance needs, while the machine's name — which is personal data in a
-published artifact — is not recoverable from it.
+machine share it and runs on different machines do not; the machine's
+name, personal data in a published artifact, is not recoverable from it.
 """
 machine_id() = bytes2hex(sha256(gethostname()))[1:12]
 
@@ -63,11 +91,8 @@ machine identifier ([`machine_id`](@ref)), OS kernel, CPU model and
 logical core count, total memory, Julia version with the sanitised
 `versioninfo()` output ([`sanitized_versioninfo`](@ref)), and
 thread/worker counts (Julia threads, BLAS threads, `Distributed`
-workers). Together with the configuration snapshot and the git
-description this makes every result attributable to configuration, code
-version, and hardware. The host's name never enters a snapshot. GPU
-fields are to be appended once a functional GPU backend is part of the
-pipeline.
+workers). The host's name never enters a snapshot. No GPU fields are
+recorded.
 """
 function hardware_fingerprint()
     cpu = Sys.cpu_info()
@@ -173,9 +198,7 @@ function layer_record(
     haskey(entry, "repo-url") && (record["url"] = entry["repo-url"])
     haskey(entry, "repo-rev") && (record["revision"] = entry["repo-rev"])
     if haskey(entry, "path")
-        path = normpath(joinpath(manifest_dir, entry["path"]))
-        # `normpath` keeps the separator after a trailing `..`
-        isempty(basename(path)) && length(path) > 1 && (path = dirname(path))
+        path = normdir(joinpath(manifest_dir, entry["path"]))
         record["path"] = provenance_path(path)
         commit, dirty = git_state(path)
         record["git_commit"] = commit
@@ -247,8 +270,7 @@ the file into every record.
 """
 function manifest_sha256()
     path = active_manifest_path()
-    path === nothing && return "unknown"
-    return bytes2hex(open(sha256, path))
+    return path === nothing ? "unknown" : content_digest(path)
 end
 
 """
@@ -349,13 +371,13 @@ end
     recorded_channels(table_path; default) -> String
 
 The channel set a product was made from, as the sidecar of the table at
-`table_path` records it (`<stem>.toml` beside `<stem>.csv`): `channels` of
+`table_path` records it ([`sidecar_path`](@ref)): `channels` of
 its `[product]` table ([`product_table`](@ref)), else of `[features]`.
 `default` is returned for a table without a sidecar or whose sidecar names
 no channel set, as the products made before the channel sets were recorded.
 """
 function recorded_channels(table_path::AbstractString; default::AbstractString)
-    sidecar = replace(table_path, r"\.csv$" => ".toml")
+    sidecar = sidecar_path(table_path)
     isfile(sidecar) || return String(default)
     tables = TOML.parsefile(sidecar)
     for name in ("product", "features")
@@ -363,6 +385,37 @@ function recorded_channels(table_path::AbstractString; default::AbstractString)
         channels isa AbstractString && return String(channels)
     end
     return String(default)
+end
+
+"""
+    gapped_product(features_path) -> Bool
+
+Whether a feature table is the product of a record with gaps: its sidecar
+([`sidecar_path`](@ref)) lists the stretches between them, and its rows are
+not consecutive windows of the record ([`window_indices`](@ref)). `false`
+for a table without a sidecar.
+"""
+function gapped_product(features_path::AbstractString)
+    sidecar = sidecar_path(features_path)
+    isfile(sidecar) || return false
+    return haskey(get(TOML.parsefile(sidecar), "features", Dict{String,Any}()), "stretches")
+end
+
+"""
+    run_channels(model_dir; default) -> String
+
+The channel set of the features a run was fitted on, from the `channels`
+key of the `[features]` table of the configuration snapshot
+`<model_dir>/config.toml`; `default` when the run directory has no
+snapshot or the snapshot records no channel set, as for the runs made
+before the channel sets were recorded ([`recorded_channels`](@ref) reads
+the same of a product).
+"""
+function run_channels(model_dir::AbstractString; default::AbstractString)
+    path = joinpath(model_dir, "config.toml")
+    isfile(path) || return String(default)
+    features = get(TOML.parsefile(path), "features", Dict{String,Any}())
+    return String(get(features, "channels", default))
 end
 
 """
@@ -391,7 +444,9 @@ end
 
 Write the dictionary `data` as TOML at `path`, backing up an existing file
 first ([`backup_existing!`](@ref)) when `safe`, and merging the
-[`provenance`](@ref) sections when `tag`. Returns `path`.
+[`provenance`](@ref) sections when `tag`. With `tag`, a key of `data` that
+names one of those sections (`hardware`, `git`, `layers`, `environment`,
+`written_at`) is refused with an `ArgumentError`. Returns `path`.
 """
 function write_toml(
     path::AbstractString,
@@ -400,7 +455,18 @@ function write_toml(
     tag::Bool = true,
 )
     payload = Dict{String,Any}(data)
-    tag && merge!(payload, provenance())
+    if tag
+        sections = provenance()
+        for key in keys(sections)
+            haskey(payload, key) && throw(
+                ArgumentError(
+                    "write_toml: the key `$key` of the data names a provenance section; " *
+                    "rename it or write with tag = false.",
+                ),
+            )
+        end
+        merge!(payload, sections)
+    end
     safe && backup_existing!(path)
     mkpath(dirname(path))
     open(path, "w") do io
@@ -414,10 +480,9 @@ end
 
 The text form of a `DateTime` column in every CSV product,
 `yyyy-mm-ddTHH:MM:SS.s` (the seconds with one to three decimals, as in
-`2035-03-19T16:27:30.0` and `2035-03-18T17:40:33.6`). The form is stated
-rather than left to the CSV library: CSV.jl 0.10 wrote it by default and
-CSV.jl 1.x writes a `DateTime` without the decimal, so a product written
-by either reads the same and compares byte for byte.
+`2035-03-19T16:27:30.0` and `2035-03-18T17:40:33.6`). CSV.jl 0.10 writes
+this form by default and CSV.jl 1.x omits the decimal; stating it makes a
+product written under either version identical byte for byte.
 """
 const TIMESTAMP_FORMAT = Dates.dateformat"yyyy-mm-dd\THH:MM:SS.s"
 

@@ -19,6 +19,10 @@ ENV["STREAMINGINFERENCE_ROOT"] = PROJECT_ROOT
 
 # Generic one-sided PSD [Hz⁻¹]: white above 1 mHz, rising as f⁻² below it
 noise_psd(f) = 1e-40 * (1 + (1e-3 / f)^2)
+# Analysis bands of the whitened feature set and the band edges that
+# reproduce it [Hz]
+const BANDS = (low_band = (1e-3, 5e-3), high_band = (5e-3, 1e-1))
+const BAND_EDGES = [1e-3, 5e-3, 1e-1]
 
 @testset "Static QA (Aqua)" begin
     # The persistent-tasks check precompiles a wrapper package against the
@@ -139,35 +143,39 @@ end
         cutoff = 5e-4,
     )
     long = whiten_record(record, fs; psd = noise_psd)
-    p_low_long, p_high_long, ent_long, lstd_long = extract_features(long, fs)
+    p_low_long, p_high_long, ent_long, lstd_long = extract_features(long, fs; BANDS...)
     @test isapprox(p_low_long, 1.0; atol = 0.15)
     @test isapprox(p_high_long, 1.0; atol = 0.15)
     @test 0.85 < ent_long <= 1.0
     @test abs(lstd_long) < 0.15
     # Windows cut from the whitened record
-    p_low_short, p_high_short, ent_short, _ = extract_features(view(long, 1:4000), fs)
+    p_low_short, p_high_short, ent_short, _ =
+        extract_features(view(long, 1:4000), fs; BANDS...)
     @test isapprox(p_low_short, 1.0; atol = 0.35)
     @test isapprox(p_high_short, 1.0; atol = 0.15)
     @test 0.8 < ent_short <= 1.0
-    p_low_win, _, _, _ = extract_features(view(long, 10001:11000), fs)
+    p_low_win, _, _, _ = extract_features(view(long, 10001:11000), fs; BANDS...)
     @test isapprox(p_low_win, 1.0; atol = 0.7)
     # A strong in-band sinusoid raises the low-band power and lowers the entropy
     t = (0:39999) ./ fs
     strong = long .+ cos.(2π * 2e-3 .* t)
-    p_low_strong, p_high_strong, ent_strong, _ = extract_features(strong, fs)
+    p_low_strong, p_high_strong, ent_strong, _ = extract_features(strong, fs; BANDS...)
     @test p_low_strong > 5 * p_low_long
     @test isapprox(p_high_strong, p_high_long; atol = 0.3)
     @test ent_strong < ent_long
-    @test_throws ArgumentError extract_features(long, 0.0)
+    @test_throws ArgumentError extract_features(long, 0.0; BANDS...)
+    # The sampling rate and the analysis bands have no default
+    @test_throws MethodError extract_features(long)
+    @test_throws UndefKeywordError extract_features(long, fs)
     # 16 samples at 0.2 Hz resolve no bin inside the 1-5 mHz band
-    @test_throws ArgumentError extract_features(view(long, 1:16), fs)
+    @test_throws ArgumentError extract_features(view(long, 1:16), fs; BANDS...)
     # A constant window yields finite features
-    @test all(isfinite, extract_features(zeros(1000), fs))
+    @test all(isfinite, extract_features(zeros(1000), fs; BANDS...))
 
     # The bands set with the default edges reproduces the whitened set exactly
     bands =
-        extract_features(long, fs; feature_set = :bands, band_edges = [1e-3, 5e-3, 1e-1])
-    @test collect(bands) == collect(extract_features(long, fs))
+        extract_features(long, fs; BANDS..., feature_set = :bands, band_edges = BAND_EDGES)
+    @test collect(bands) == collect(extract_features(long, fs; BANDS...))
     @test feature_names(:bands; n_bands = 2) ==
           [:p_band_1, :p_band_2, :spectral_entropy, :log_power_std]
     @test length(feature_names(:bands; n_bands = 5)) == 7
@@ -176,35 +184,43 @@ end
     # Finer bands: unit mean on white noise; a 1.5 mHz tone lands in the
     # (1, 2] mHz band and leaves the others alone
     edges = [5e-4, 1e-3, 2e-3, 4e-3, 1e-2, 4e-2]
-    fine = extract_features(long, fs; feature_set = :bands, band_edges = edges)
+    fine = extract_features(long, fs; BANDS..., feature_set = :bands, band_edges = edges)
     @test length(fine) == 7
     @test all(isapprox.(fine[1:5], 1.0; atol = 0.35))
     tone = long .+ cos.(2π * 1.5e-3 .* t)
-    fine_tone = extract_features(tone, fs; feature_set = :bands, band_edges = edges)
+    fine_tone =
+        extract_features(tone, fs; BANDS..., feature_set = :bands, band_edges = edges)
     @test fine_tone[2] > 5 * fine[2]
     @test isapprox(fine_tone[4], fine[4]; atol = 0.3) && fine_tone[6] < fine[6]
-    @test_throws ArgumentError extract_features(long, fs; feature_set = :bands)
+    @test_throws ArgumentError extract_features(long, fs; BANDS..., feature_set = :bands)
     @test_throws ArgumentError extract_features(
         long,
         fs;
+        BANDS...,
         feature_set = :bands,
         band_edges = [5e-3, 1e-3],
     )
     @test_throws ArgumentError extract_features(
         view(long, 1:1000),
         fs;
+        BANDS...,
         feature_set = :bands,
         band_edges = [1e-5, 5e-5, 1e-1],
     )
     @test_throws ArgumentError feature_names(:bands; n_bands = 0)
 
     # The raw-window set: four finite values, entropy in [0, 1]
-    paper = extract_features(record[1:1000], fs; feature_set = :paper)
+    paper = extract_features(record[1:1000], fs; BANDS..., feature_set = :paper)
     @test length(paper) == 4 && all(isfinite, paper) && 0 <= paper[1] <= 1
     @test feature_names(:paper) ==
           [:spectral_entropy, :log_power_mean, :log_power_std, :log_power_max]
     @test_throws ArgumentError feature_names(:other)
-    @test_throws ArgumentError extract_features(record[1:1000], fs; feature_set = :other)
+    @test_throws ArgumentError extract_features(
+        record[1:1000],
+        fs;
+        BANDS...,
+        feature_set = :other,
+    )
 end
 
 @testset "Multichannel features" begin
@@ -234,14 +250,31 @@ end
     # Features: one channel as a matrix or a vector alike; the count does not
     # grow with the channels; band powers are the channel means
     edges = [1e-3, 2e-3, 5e-3, 1e-1]
-    single = extract_features(window[:, 1], fs; feature_set = :bands, band_edges = edges)
-    @test extract_features(window[:, 1:1], fs; feature_set = :bands, band_edges = edges) ==
-          single
-    network = extract_features(window, fs; feature_set = :bands, band_edges = edges)
+    single = extract_features(
+        window[:, 1],
+        fs;
+        BANDS...,
+        feature_set = :bands,
+        band_edges = edges,
+    )
+    @test extract_features(
+        window[:, 1:1],
+        fs;
+        BANDS...,
+        feature_set = :bands,
+        band_edges = edges,
+    ) == single
+    network =
+        extract_features(window, fs; BANDS..., feature_set = :bands, band_edges = edges)
     @test length(network) == length(single) == 5
     per_channel = [
-        extract_features(window[:, c], fs; feature_set = :bands, band_edges = edges) for
-        c in 1:3
+        extract_features(
+            window[:, c],
+            fs;
+            BANDS...,
+            feature_set = :bands,
+            band_edges = edges,
+        ) for c in 1:3
     ]
     for band in 1:3
         @test network[band] ≈ sum(f[band] for f in per_channel) / 3 rtol = 1e-6
@@ -249,16 +282,16 @@ end
     # Under noise the averaged periodogram keeps its unit mean and its
     # spread falls as 1/√C: log₁₀ of the standard deviation goes from 0
     # towards -log₁₀(√3)
-    long_single = extract_features(channels[:, 1], fs)
-    long_network = extract_features(channels, fs)
+    long_single = extract_features(channels[:, 1], fs; BANDS...)
+    long_network = extract_features(channels, fs; BANDS...)
     @test isapprox(long_network[1], 1.0; atol = 0.1)
     @test isapprox(long_network[4] - long_single[4], -log10(sqrt(3)); atol = 0.05)
     # A signal common to the channels keeps its band power; the noise does not add to it
     t = (0:19999) ./ fs
     tone = cos.(2π * 2e-3 .* t)
     @test isapprox(
-        extract_features(channels .+ tone, fs)[1],
-        extract_features(channels[:, 1] .+ tone, fs)[1];
+        extract_features(channels .+ tone, fs; BANDS...)[1],
+        extract_features(channels[:, 1] .+ tone, fs; BANDS...)[1];
         rtol = 0.05,
     )
     # The other combination: of every feature the value farthest towards a
@@ -267,6 +300,7 @@ end
     extreme = extract_features(
         window,
         fs;
+        BANDS...,
         feature_set = :bands,
         band_edges = edges,
         combination = :max,
@@ -279,6 +313,7 @@ end
     @test extract_features(
         window[:, 1:1],
         fs;
+        BANDS...,
         feature_set = :bands,
         band_edges = edges,
         combination = :max,
@@ -286,23 +321,24 @@ end
     @test extract_features(
         window[:, 1],
         fs;
+        BANDS...,
         feature_set = :bands,
         band_edges = edges,
         combination = :max,
     ) == single
-    @test_throws ArgumentError extract_features(window, fs; combination = :sum)
+    @test_throws ArgumentError extract_features(window, fs; BANDS..., combination = :sum)
     # A tone in one channel only: the average halves its excess band power,
     # the maximum keeps it
     one = copy(channels)
     one[:, 2] .+= tone
     excess(f) = f[1] - 1
-    alone = extract_features(one[:, 2], fs)
+    alone = extract_features(one[:, 2], fs; BANDS...)
     @test isapprox(
-        excess(extract_features(one[:, 1:2], fs)),
+        excess(extract_features(one[:, 1:2], fs; BANDS...)),
         excess(alone) / 2;
         rtol = 0.05,
     )
-    @test extract_features(one[:, 1:2], fs; combination = :max)[1] == alone[1]
+    @test extract_features(one[:, 1:2], fs; BANDS..., combination = :max)[1] == alone[1]
     # Sliding windows of a multichannel record
     table = window_features(
         channels,
@@ -311,10 +347,11 @@ end
         step_size = 500,
         low_band = (1e-3, 5e-3),
         high_band = (5e-3, 1e-1),
+        band_edges = BAND_EDGES,
         feature_set = :whitened,
     )
     @test size(table) == (39, 4)
-    @test Tuple(table[11, :]) == extract_features(channels[5001:6000, :], fs)
+    @test Tuple(table[11, :]) == extract_features(channels[5001:6000, :], fs; BANDS...)
     @test Tuple(
         window_features(
             channels,
@@ -323,13 +360,14 @@ end
             step_size = 500,
             low_band = (1e-3, 5e-3),
             high_band = (5e-3, 1e-1),
+            band_edges = BAND_EDGES,
             feature_set = :whitened,
             combination = :max,
         )[
             11,
             :,
         ],
-    ) == extract_features(channels[5001:6000, :], fs; combination = :max)
+    ) == extract_features(channels[5001:6000, :], fs; BANDS..., combination = :max)
     @test window_features(
         channels[:, 1],
         fs;
@@ -337,6 +375,7 @@ end
         step_size = 500,
         low_band = (1e-3, 5e-3),
         high_band = (5e-3, 1e-1),
+        band_edges = BAND_EDGES,
         feature_set = :whitened,
     ) == window_features(
         channels[:, 1:1],
@@ -345,6 +384,7 @@ end
         step_size = 500,
         low_band = (1e-3, 5e-3),
         high_band = (5e-3, 1e-1),
+        band_edges = BAND_EDGES,
         feature_set = :whitened,
     )
 end
@@ -458,10 +498,11 @@ end
         fs;
         geometry...,
         high_band = (5e-3, 1e-1),
+        band_edges = BAND_EDGES,
         feature_set = :whitened,
     )
     @test size(X) == (5, 4)
-    @test X[3, :] == collect(extract_features(view(x, 1001:2000), fs))
+    @test X[3, :] == collect(extract_features(view(x, 1001:2000), fs; BANDS...))
 
     # Feature and label tables: the label-free path yields the identical raw matrix
     mktempdir() do dir
@@ -530,6 +571,33 @@ end
         sample_rate = 0.2,
         windows = collect(1:10),
     ) == plain
+    # The sweep and the fitted threshold count across a gap as event_metrics does
+    fit(w) = select_threshold(
+        labels,
+        Float64.(decisions);
+        criterion = "fpr",
+        target_fpr = 0.5,
+        step_size = 100,
+        sample_rate = 0.2,
+        n_candidates = 2,
+        windows = w,
+    )
+    (t_gap, info_gap), (t_plain, info_plain) = fit(index), fit(nothing)
+    @test t_gap == t_plain == 1.0
+    @test info_gap["fit_false_alarm_episodes"] == 2 &&
+          info_plain["fit_false_alarm_episodes"] == 1
+    sweep_gap = threshold_sweep(
+        labels,
+        Float64.(decisions);
+        step_size = 100,
+        sample_rate = 0.2,
+        n_candidates = 2,
+        windows = index,
+    )
+    @test sweep_gap.n_false_alarm_episodes[end] == 2 && sweep_gap.n_events[end] == 2
+    # Runs of consecutive window indices, as positions
+    @test StreamingInference.alarm_runs([1, 2, 4, 5, 6, 9]) == [1:2, 3:5, 6:6]
+    @test isempty(StreamingInference.alarm_runs(Int[]))
 
     # The window index of every row of a product, without and with gaps
     mktempdir() do dir
@@ -870,6 +938,9 @@ end
     empty = Dict{String,Any}()
     @test pipeline_paths(empty).inputs == joinpath(project_root(), "data", "inputs")
     @test inference_settings(empty).block == "all"
+    # The feature table is resolved against the root, the label table kept as given
+    given = inference_settings(Dict("inference" => Dict("labels" => "data/labels.csv")))
+    @test given.labels == "data/labels.csv" && isabspath(given.features)
     # Any block name is admissible here; the scored run's split decides
     @test inference_settings(Dict("inference" => Dict("block" => "evaluation"))).block ==
           "evaluation"
@@ -880,6 +951,15 @@ end
             empty,
         )
         @test geometry.first_window == 1
+        # A stage that scores the table falls back to its own section
+        scored = @test_logs (:warn, r"taken from \[inference\]") feature_geometry(
+            joinpath(dir, "absent_features.csv"),
+            Dict("inference" => Dict("step_size" => 50, "sample_rate" => 1.0));
+            fallback = "inference",
+        )
+        @test scored.step_size == 50 &&
+              scored.sample_rate == 1.0 &&
+              scored.first_window == 1
     end
     # Resources: machine-derived defaults, ordered thresholds
     r = resource_settings(empty)
@@ -938,6 +1018,11 @@ end
         plain = joinpath(dir, "plain.toml")
         write_toml(plain, Dict("k" => "v"); tag = false)
         @test !haskey(TOML.parsefile(plain), "git")
+        # A key that names a provenance section is refused, not replaced
+        @test_throws ArgumentError write_toml(joinpath(dir, "clash.toml"), Dict("git" => 1))
+        @test !isfile(joinpath(dir, "clash.toml"))
+        write_toml(plain, Dict("git" => 1); tag = false)
+        @test TOML.parsefile(plain)["git"] == 1
     end
     @test occursin("Time", sprint(report_timing))
 
@@ -1027,6 +1112,168 @@ end
         @test isfile(joinpath(dir, "run", "manifest_snapshot_#1.toml"))
         @test read(target) == read(manifest)
     end
+end
+
+@testset "Stage helpers" begin
+    @test sidecar_path(joinpath("data", "x_features.csv")) ==
+          joinpath("data", "x_features.toml")
+    @test sidecar_path("x_features.toml") == "x_features.toml"
+    mktempdir() do dir
+        features = joinpath(dir, "x_features.csv")
+        sidecar = joinpath(dir, "x_features.toml")
+        # The feature map of a product, from its sidecar
+        @test_throws ArgumentError FeatureMap(features)
+        @test !gapped_product(features)
+        write(
+            sidecar,
+            """
+            [features]
+            low_band_hz = [0.001, 0.005]
+            high_band_hz = [0.005, 0.1]
+            band_edges_hz = [0.001, 0.002, 0.005, 0.1]
+            feature_set = "bands"
+            channel_combination = "max"
+            n_windows = 4
+            """,
+        )
+        read_map = FeatureMap(features)
+        @test read_map.feature_set == :bands && read_map.combination == :max
+        @test read_map.low_band == BANDS.low_band && read_map.high_band == BANDS.high_band
+        @test read_map.band_edges == [1e-3, 2e-3, 5e-3, 1e-1]
+        @test !gapped_product(features)
+        write(
+            sidecar,
+            "[features]\nlow_band_hz = [0.001, 0.005]\nhigh_band_hz = [0.005, 0.1]\n" *
+            "band_edges_hz = [0.001, 0.005, 0.1]\n" *
+            "stretches = [{first_window = 1, n_windows = 2}]\n",
+        )
+        defaults = FeatureMap(features)
+        @test defaults.feature_set == :whitened && defaults.combination == :mean
+        @test gapped_product(features)
+        write(sidecar, "[features]\nlow_band_hz = [0.001, 0.005]\n")
+        @test_throws ArgumentError FeatureMap(features)
+
+        # The channel set, threshold and split of a fitted run
+        run_dir = joinpath(dir, "run")
+        mkpath(run_dir)
+        @test run_channels(run_dir; default = "X") == "X"
+        write(joinpath(run_dir, "config.toml"), "[features]\nchannels = \"AE\"\n")
+        @test run_channels(run_dir; default = "X") == "AE"
+        write(joinpath(run_dir, "config.toml"), "[training]\nseed = 1\n")
+        @test run_channels(run_dir; default = "X") == "X"
+        @test_throws ArgumentError load_threshold(run_dir)
+        write(
+            joinpath(run_dir, "threshold.toml"),
+            "[threshold]\nvalue = 0.75\nvalidation_recall = 0.5\nfit_fpr = 0.01\n",
+        )
+        threshold, info = @test_logs (:info, r"predates") load_threshold(run_dir)
+        @test threshold === 0.75f0 && info["fit_recall"] == 0.5 && info["fit_fpr"] == 0.01
+        @test !haskey(info, "validation_recall")
+        write(joinpath(run_dir, "threshold.toml"), "[threshold]\ncriterion = \"far\"\n")
+        @test_throws ArgumentError load_threshold(run_dir)
+        @test_throws ArgumentError block_rows(run_dir, "test", 100)
+        write(
+            joinpath(run_dir, "split.toml"),
+            "[split]\nn_windows = 100\ntrain = [1, 70]\nvalidation = [71, 85]\n" *
+            "test = [86, 100]\n",
+        )
+        @test block_rows(run_dir, "test", 100) == 86:100
+        @test_throws ArgumentError block_rows(run_dir, "calibration", 100)
+        @test_throws DimensionMismatch block_rows(run_dir, "test", 90)
+    end
+
+    # The metrics of a scored block, as event_metrics and the ROC give them
+    labels = [0, 0, 1, 1, 0, 0, 1, 1, 0, 0]
+    scores = [0.1, 0.2, 0.9, 0.8, 0.7, 0.1, 0.6, 0.9, 0.2, 0.1]
+    geometry = (step_size = 100, sample_rate = 0.2)
+    m, auc, persisted = block_metrics(scores, labels, 0.5, geometry)
+    @test m == event_metrics(Int.(scores .>= 0.5), labels; geometry...)
+    @test auc == roc_auc(roc_curve(labels, scores)[1:2]...)
+    @test persisted == merge(
+        metrics_dict(m),
+        Dict{String,Any}("auc" => auc, "n_windows" => 10, "threshold" => 0.5),
+    )
+    @test metrics_dict((recall = 0.5, n_events = 2)) ==
+          Dict{String,Any}("recall" => 0.5, "n_events" => 2)
+    gapped, _, _ = block_metrics(scores, labels, 0.5, geometry; windows = [1:7; 9:11])
+    @test gapped.n_events == 3 && m.n_events == 2
+    @test fixed(0.5, 3, 6) == " 0.500" && fixed(12.0, 2, 7) == "  12.00"
+    @test fixed(NaN, 3, 6) == "   NaN" && fixed(Inf, 2, 5) == "  Inf"
+    table = sprint(io -> print_block_summary([("validation", m, auc)]; io = io))
+    @test occursin("Block        AUC", table)
+    @test occursin("  validation   $(fixed(auc, 3, 6))  $(fixed(m.precision, 3, 6))", table)
+
+    # The configuration of a script, wherever it stands among the options
+    @test config_argument("default.toml"; args = String[]) == "default.toml"
+    @test config_argument("default.toml"; args = ["--test-mode"]) == "default.toml"
+    @test config_argument("default.toml"; args = ["run.toml", "--seed", "3"]) == "run.toml"
+    @test config_argument("default.toml"; args = ["--run-id", "x", "configs/run.toml"]) ==
+          "configs/run.toml"
+    @test config_argument("default.toml"; args = ["--series", "x.csv", "run.toml"]) ==
+          "run.toml"
+
+    # The file log of a stage: every record teed to the file while the stage
+    # runs, the logger restored and the file closed when it returns or throws
+    mktempdir() do dir
+        path = joinpath(dir, "stage.log")
+        @test with_file_log(path) do
+            @info "stage record"
+            42
+        end == 42
+        @info "record after the stage"
+        @test occursin("stage record", read(path, String))
+        @test !occursin("after the stage", read(path, String))
+        failed = joinpath(dir, "failed.log")
+        @test_throws ErrorException with_file_log(failed) do
+            @info "record before the failure"
+            error("stage failed")
+        end
+        @test occursin("before the failure", read(failed, String))
+    end
+
+    # The credited spans of an event table in mission time
+    geometry = RunGeometry(0.2, 50.0, 10, DateTime(2035))
+    events = DataFrame(
+        label = ["a", "b"],
+        merger_time_s = [4000.0, 7600.0],
+        label_start_index = [100, 900],
+        label_end_index = [801, 1521],
+        signal_start_index = [500, 1000],
+    )
+    @test StreamingInference.credited_span_times(events, geometry; crediting = :signal) == [
+        (row_time(geometry, 500), row_time(geometry, 801)),
+        (row_time(geometry, 1000), row_time(geometry, 1521)),
+    ]
+    @test first.(
+        StreamingInference.credited_span_times(events, geometry; crediting = :label),
+    ) == [row_time(geometry, 100), row_time(geometry, 900)]
+    @test StreamingInference.credited_span_label(:signal) == "Signal span" &&
+          StreamingInference.credited_span_label(:label) == "Labelled span"
+    @test_throws ArgumentError StreamingInference.credited_span_times(
+        events,
+        geometry;
+        crediting = :other,
+    )
+    @test_throws ArgumentError StreamingInference.credited_span_times(
+        select(events, Not(:signal_start_index)),
+        geometry;
+        crediting = :signal,
+    )
+    # Without label spans: the hour before every event time, which a table may
+    # give as t_c_sec
+    point = DataFrame(t_c_sec = [3600.0])
+    @test event_merger_times(point) == [3600.0]
+    @test StreamingInference.credited_span_times(point, geometry; crediting = :signal) ==
+          [(DateTime(2035), DateTime(2035) + Hour(1))]
+    @test StreamingInference.credited_span_times(
+        point,
+        geometry;
+        crediting = :label,
+        fallback_span = Minute(10),
+    ) == [(DateTime(2035) + Minute(50), DateTime(2035) + Hour(1))]
+    @test StreamingInference.hours_between(DateTime(2035), DateTime(2035) + Minute(90)) ==
+          1.5
+    @test StreamingInference.days_since(DateTime(2035), DateTime(2035) + Hour(36)) == 1.5
 end
 
 @testset "Product identity" begin
@@ -1352,6 +1599,33 @@ end
         # at the raster scale
         @test side["animation"]["frame_px"] == 2 .* collect(figure_size(2, 2))
         @test side["animation"]["px_per_unit"] == 2
+        # Another raster scale is recorded as rendered
+        save_animation(stem; run_id = "unit", px_per_unit = 1) do target
+            animate_mission_replay(
+                windows,
+                0.8,
+                target;
+                n_frames = 2,
+                framerate = 4,
+                hold_frames = 0,
+                px_per_unit = 1,
+            )
+        end
+        side = TOML.parsefile("$stem.toml")
+        @test side["animation"]["px_per_unit"] == 1
+        @test side["animation"]["frame_px"] == collect(figure_size(2, 2))
+        @test_throws ArgumentError save_animation(identity, stem; px_per_unit = 1.5)
+        # Alarm episodes are runs of windows consecutive in index: a window
+        # missing from the table ends one
+        ext = Base.get_extension(StreamingInference, :StreamingInferenceCairoMakieExt)
+        alarm = Bool[0, 1, 1, 1, 0]
+        @test ext.episode_starts(alarm, [1, 2, 3, 5, 6]) == [2, 4]
+        @test ext.episode_starts(alarm, 1:5) == [2]
+        @test_throws ArgumentError animate_mission_replay(
+            select(windows, Not(:window)),
+            0.8,
+            joinpath(dir, "replay.gif"),
+        )
         # An animation is written as GIF, and a fractional raster scale renders
         # frames the encoder does not reproduce
         @test_throws ArgumentError animate_mission_replay(

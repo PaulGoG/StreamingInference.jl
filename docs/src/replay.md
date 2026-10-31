@@ -67,10 +67,15 @@ single precision, or the batch is refused.
 simulates the telemetry downlink of a spacecraft: ground-station passes,
 packet loss and retransmission, and an on-board recorder. It is not
 registered and is added by URL,
-`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl")`. With
-DeepSpaceTelemetry 2.6 or later loaded, [`open_telemetry_run`](@ref) opens
-one of its run directories read-only through the producer's reference run
-adapter, which is versioned with its run-directory contract.
+`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl")`. Its
+reader package, DeepSpaceTelemetryReader, holds the configuration reader
+and the reference run adapter without the figure stack and the HDF5 export;
+a consumer that only reads runs adds that one alone,
+`Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl", subdir = "reader")`.
+With DeepSpaceTelemetryReader 3.1 loaded, directly or through
+DeepSpaceTelemetry, [`open_telemetry_run`](@ref) opens one of its run
+directories read-only through the run adapter, which is versioned with the
+run-directory contract.
 
 A run carries one or several named payload columns under one link
 accounting: a batch is transferred, and lost, with all its columns.
@@ -85,19 +90,16 @@ channels of a matrix.
 - a run directory that does not exist, or a `producer_compat` that is not
   a version number;
 - a run written by a producer older than `producer_compat` (default
-  `"1.0"`);
-- an external-payload run of a producer up to 2.0.1 that holds a scheduled
-  generation gap or an emitter restart, since those producers misplace the
-  payload from that instant on;
+  `"2.6"`) or than 2.6.0, the first producer with the declared-hole feed
+  and the payload-row stamps the adapter reads, whichever is later;
 - a run whose payload row 1 does not lie at the mission epoch (an initial
   downtime), since the consumer counts payload rows from the epoch;
 - a column selection that is empty, names a column twice or names a column
   the run does not carry, and the default selection on a run that carries
   several columns.
 
-The holes of a run are those of the producer's declared-hole feed from
-version 2.6.0 on, and before it the generation gaps its event logs
-declare, each known from the end of the gap; the run descriptor is its
+The holes of a run are those of the producer's declared-hole feed, each
+known from the instant it was declared; the run descriptor is its
 `descriptor.toml`.
 
 ## Scheduling and conditioning
@@ -153,8 +155,8 @@ declared hole lies in its own rows or in more of its stretch than
 `min_coverage` admits, is declared by one [`GapEvent`](@ref), which is
 passed to the estimator ([`estimator_gap!`](@ref)) before the window after
 it. Its cause is `:lost` for a lost or pruned batch, and the producer's
-cause for a declared hole (`:scheduled`, `:recorder`, `:stream`,
-`:undelivered`, `:not_generated`).
+cause for a declared hole (`:stream`, `:scheduled`, `:recorder`,
+`:undelivered`, `:not_generated`, `:other`).
 
 A missing window holds back every later one. At the end of the feed the
 windows still missing are declared `:undelivered`. During a replay,
@@ -214,8 +216,8 @@ Windows of ``W`` samples advanced by ``S`` overlap: every sample lies in
 ``κ = \lfloor W/S \rfloor`` consecutive windows ([`window_overlap`](@ref)),
 so a transient shorter than a step can alarm ``κ`` consecutive windows and
 raise an alert at any persistence up to ``κ``. A persistence ``p`` delays
-the alert by ``p - 1`` steps after the first alarmed window, that is by
-``(p - 1) S / f_s`` of data at the sampling rate ``f_s``, and a
+the alert by ``p - 1`` steps, ``(p - 1) S / f_s`` of data at the sampling
+rate ``f_s``, after the first alarmed window, and a
 persistence above ``κ`` requires alarms on windows that share no sample.
 The table therefore offers a second tier: with `confirmation_persistence`
 above both ``κ`` and ``p``, an alert is confirmed by the arrival that
@@ -223,7 +225,7 @@ completes that many consecutive alarmed windows touching the span, and
 confirmations are counted and timed beside the alerts (`confirmed`,
 `t_confirmation`, `confirmation_latency_data_h`,
 `false_confirmations_per_30d`). The preliminary alert keeps its latency;
-the confirmation rests on the duration of the excess.
+the confirmation follows only once the excess has lasted that many windows.
 
 ## Pipeline root and provenance
 

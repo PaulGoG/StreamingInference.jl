@@ -52,13 +52,12 @@ given the `blocks` of [`chronological_split`](@ref):
   windows between them so that the range stays contiguous in mission
   time and an alarm episode spanning the join is counted once.
 
-The pooled block doubles the mission time behind the fitted false-alarm
-rate, whose relative error scales as the inverse square root of the
-episodes it counts; a 55-day block routinely counts fewer than five.
-The test block carries no information the fit could leak, being scored
-once after training and entering neither model selection nor early
-stopping, but it ceases to be an independent check of the operating
-point — that role belongs to a separate observation record.
+The pooled block doubles the observation time behind the fitted
+false-alarm rate, whose relative error scales as the inverse square root
+of the episodes it counts. The test block carries no information the fit
+could leak, being scored once after training and entering neither model
+selection nor early stopping, but it no longer checks the operating point
+independently; a separate observation record does.
 """
 function threshold_rows(blocks::NamedTuple, threshold_block::AbstractString)
     threshold_block in ("validation", "held_out") || throw(
@@ -247,7 +246,7 @@ end
 
 """
     threshold_sweep(y, scores; step_size, sample_rate, n_candidates = 400,
-                    tail_candidates = 0) -> DataFrame
+                    tail_candidates = 0, windows = nothing) -> DataFrame
 
 Window- and event-level detection statistics ([`event_metrics`](@ref)) of
 the decision `score >= threshold` at every candidate threshold, the
@@ -265,7 +264,9 @@ range of false-alarm rates an alert trigger is fitted to.
 quantiles ``1 - \\epsilon`` with ``\\epsilon`` log-spaced from the grid
 step down to one window in the block, so that the rates between one
 episode and the coarse step become reachable; 0 keeps the quantile grid
-alone.
+alone. For a block of a record with gaps, `windows` gives the record
+window index of every row, and events and false-alarm episodes end at a
+gap ([`event_metrics`](@ref)).
 """
 function threshold_sweep(
     y::AbstractVector{<:Integer},
@@ -274,6 +275,7 @@ function threshold_sweep(
     sample_rate::Real,
     n_candidates::Integer = 400,
     tail_candidates::Integer = 0,
+    windows::Union{Nothing,AbstractVector{<:Integer}} = nothing,
 )
     length(y) == length(scores) ||
         throw(DimensionMismatch("$(length(y)) labels for $(length(scores)) scores."))
@@ -310,6 +312,7 @@ function threshold_sweep(
             y;
             step_size = step_size,
             sample_rate = sample_rate,
+            windows = windows,
         )
         push!(
             sweep,
@@ -332,7 +335,7 @@ end
 """
     select_threshold(y, scores; criterion = "far", target_far_per_30d = 3.0,
                      target_fpr = 0.05, step_size, sample_rate, n_candidates = 400,
-                     tail_candidates = 0)
+                     tail_candidates = 0, windows = nothing)
         -> (threshold, info)
 
 Decision threshold fitted on a calibration block of labels `y` and `scores`
@@ -366,7 +369,8 @@ the fitting block at the threshold (`fit_*`), and the block size. Among
 them `fit_false_alarm_episodes` is the count the fitted rate rests on:
 its inverse square root is the relative error of that rate, and an
 operating point placed on a handful of episodes does not transfer to
-another record.
+another record. `windows`, the record window index of every row of a
+block with gaps, is passed to [`event_metrics`](@ref).
 """
 function select_threshold(
     y::AbstractVector{<:Integer},
@@ -378,6 +382,7 @@ function select_threshold(
     sample_rate::Real,
     n_candidates::Integer = 400,
     tail_candidates::Integer = 0,
+    windows::Union{Nothing,AbstractVector{<:Integer}} = nothing,
 )
     length(y) == length(scores) ||
         throw(DimensionMismatch("$(length(y)) labels for $(length(scores)) scores."))
@@ -404,6 +409,7 @@ function select_threshold(
             sample_rate = sample_rate,
             n_candidates = n_candidates,
             tail_candidates = tail_candidates,
+            windows = windows,
         )
         fpr_admissible(row) = isnan(row.fpr) || row.fpr <= target_fpr
         if applied == "far"
@@ -427,6 +433,7 @@ function select_threshold(
         y;
         step_size = step_size,
         sample_rate = sample_rate,
+        windows = windows,
     )
     info = Dict{String,Any}(
         "criterion" => applied,
@@ -443,4 +450,218 @@ function select_threshold(
         "fit_observation_days" => m.observation_days,
     )
     return Float64(threshold), info
+end
+
+# --- Stage helpers: the threshold, split and metrics of a fitted run ---
+
+"""
+    THRESHOLD_FIT_KEYS
+
+Rates of the fitting block that a `threshold.toml` records under
+`fit_<key>` ([`select_threshold`](@ref)); files written before the fitting
+block became configurable hold them under `validation_<key>`.
+"""
+const THRESHOLD_FIT_KEYS = (
+    "windows",
+    "positive_windows",
+    "recall",
+    "precision",
+    "fpr",
+    "false_alarms_per_30d",
+    "false_alarm_episodes",
+    "observation_days",
+)
+
+"""
+    migrate_threshold_info!(info) -> info
+
+Rename the `validation_*` rate keys of a `threshold.toml` written before
+the fitting block became configurable to their `fit_*` names
+([`THRESHOLD_FIT_KEYS`](@ref)) wherever the new name is absent, so that
+files of either form read alike; the renamed keys are logged.
+"""
+function migrate_threshold_info!(info::AbstractDict)
+    renamed = String[]
+    for k in THRESHOLD_FIT_KEYS
+        old, new = "validation_$k", "fit_$k"
+        if haskey(info, old) && !haskey(info, new)
+            info[new] = info[old]
+            delete!(info, old)
+            push!(renamed, old)
+        end
+    end
+    isempty(renamed) ||
+        @info "threshold.toml predates the configurable fitting block; validation_* keys read as fit_*" renamed
+    return info
+end
+
+"""
+    load_threshold(model_dir) -> (threshold::Float32, info::Dict)
+
+The decision threshold persisted in the `[threshold]` table of
+`<model_dir>/threshold.toml` (its `value`) and the whole table, the `info`
+of [`select_threshold`](@ref); older files are read through
+[`migrate_threshold_info!`](@ref). The file and its `value` key are
+required (`ArgumentError`).
+"""
+function load_threshold(model_dir::AbstractString)
+    path = joinpath(model_dir, "threshold.toml")
+    isfile(path) || throw(
+        ArgumentError(
+            "no decision threshold at $path; the run directory must hold the " *
+            "threshold.toml of the stage that fitted it.",
+        ),
+    )
+    info = migrate_threshold_info!(TOML.parsefile(path)["threshold"])
+    haskey(info, "value") ||
+        throw(ArgumentError("threshold.toml at $path carries no `value` key."))
+    return Float32(info["value"]), info
+end
+
+"""
+    block_rows(model_dir, block, n_windows) -> UnitRange{Int}
+
+Row range of `block` of the table a run was fitted on, from the `[split]`
+table of `<model_dir>/split.toml`, where every block is a pair of first
+and last row (`validation` and `test` of a training run, `calibration`
+and `evaluation` of a calibration run) beside the `n_windows` of the
+table. `ArgumentError` without the file or for a block the split does not
+name; `DimensionMismatch` when the given table does not hold `n_windows`
+rows.
+"""
+function block_rows(model_dir::AbstractString, block::AbstractString, n_windows::Integer)
+    path = joinpath(model_dir, "split.toml")
+    isfile(path) || throw(
+        ArgumentError(
+            "block = $block requires the split.toml of the training run in $model_dir.",
+        ),
+    )
+    split = TOML.parsefile(path)["split"]
+    blocks = sort([k for (k, v) in split if v isa AbstractVector && length(v) == 2])
+    block in blocks || throw(
+        ArgumentError(
+            "block = $(repr(block)) is not a block of the split in $model_dir; " *
+            "its blocks are " *
+            join(blocks, ", ") *
+            ".",
+        ),
+    )
+    split["n_windows"] == n_windows || throw(
+        DimensionMismatch(
+            "block = $block applies to the training table of $(split["n_windows"]) " *
+            "windows; the given features hold $n_windows.",
+        ),
+    )
+    lo, hi = split[block]
+    return Int(lo):Int(hi)
+end
+
+"""
+    metrics_dict(m) -> Dict{String, Any}
+
+The fields of an [`event_metrics`](@ref) named tuple keyed by name, as a
+`metrics.toml` snapshot persists them.
+"""
+metrics_dict(m::NamedTuple) = Dict{String,Any}(String(k) => v for (k, v) in pairs(m))
+
+"""
+    block_metrics(scores, labels, threshold, geometry; windows = nothing)
+        -> (metrics, auc, dict)
+
+Event-level metrics ([`event_metrics`](@ref)) of a scored block at the
+decision `threshold`, with the `step_size` and `sample_rate` of
+`geometry` (a named tuple such as that of [`feature_geometry`](@ref)) and
+the record `windows` of a block with gaps; its ROC area
+([`roc_auc`](@ref)); and the dictionary a `metrics.toml` snapshot persists,
+the metric fields ([`metrics_dict`](@ref)) with `auc`, `n_windows` and
+`threshold`.
+"""
+function block_metrics(
+    scores::AbstractVector{<:Real},
+    labels::AbstractVector{<:Integer},
+    threshold::Real,
+    geometry::NamedTuple;
+    windows::Union{Nothing,AbstractVector{<:Integer}} = nothing,
+)
+    m = event_metrics(
+        Int.(scores .>= threshold),
+        labels;
+        step_size = geometry.step_size,
+        sample_rate = geometry.sample_rate,
+        windows = windows,
+    )
+    fpr, tpr, _ = roc_curve(labels, scores)
+    auc = roc_auc(fpr, tpr)
+    d = merge(
+        metrics_dict(m),
+        Dict{String,Any}(
+            "auc" => auc,
+            "n_windows" => length(labels),
+            "threshold" => Float64(threshold),
+        ),
+    )
+    return m, auc, d
+end
+
+"""
+    fixed(x, digits, width) -> String
+
+`x` in fixed-point notation with `digits` decimals, right-aligned in
+`width` characters; a non-finite value, or one that `string` writes in
+exponent form, prints as `string` writes it.
+
+# Example
+
+```julia
+fixed(0.5, 3, 6)   # " 0.500"
+```
+"""
+function fixed(x::Real, digits::Integer, width::Integer)
+    s = string(isfinite(x) ? round(Float64(x); digits = digits) : Float64(x))
+    if isfinite(x) && !occursin('e', s)
+        head, tail = split(s, '.')
+        s = head * "." * rpad(tail, digits, '0')
+    end
+    return lpad(s, width)
+end
+
+"""
+    print_block_summary(rows; io = stdout)
+
+Console table of the window- and event-level detection statistics of
+evaluated blocks, one line per `(name, metrics, auc)` triple of `rows`
+with `metrics` from [`event_metrics`](@ref) (as [`block_metrics`](@ref)
+returns them): ROC area, precision, recall, F1, balanced accuracy, events,
+detected events and false alarms per 30 days.
+"""
+function print_block_summary(rows; io::IO = stdout)
+    println(io)
+    println(
+        io,
+        "  Block        AUC      Prec.   Recall  F1      Bal.acc  Events  Detected  FA/30 d",
+    )
+    for (name, m, auc) in rows
+        println(
+            io,
+            "  ",
+            rpad(name, 11),
+            "  ",
+            fixed(auc, 3, 6),
+            "  ",
+            fixed(m.precision, 3, 6),
+            "  ",
+            fixed(m.recall, 3, 6),
+            "  ",
+            fixed(m.f1, 3, 6),
+            "  ",
+            fixed(m.balanced_accuracy, 3, 6),
+            "  ",
+            lpad(m.n_events, 6),
+            "  ",
+            lpad(m.n_detected, 8),
+            "  ",
+            fixed(m.false_alarms_per_30d, 2, 7),
+        )
+    end
+    return nothing
 end

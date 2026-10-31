@@ -54,7 +54,6 @@ function tick_mission(
         ),
         "post_processing" => Dict{String,Any}(
             "generate_mask_timeline" => false,
-            "expand_to_pointwise_masks" => false,
             "alert_latency" => false,
             "delivery_delay" => false,
             "hdf5_export" => false,
@@ -64,17 +63,12 @@ function tick_mission(
     path = joinpath(dir, "$run_id.toml")
     open(io -> TOML.print(io, scenario), path, "w")
     cfg = TelemetryCore.tick_configuration(TelemetryCore.load_config(path))
-    previous = TelemetryCore.DATA_ROOT[]
-    TelemetryCore.DATA_ROOT[] = joinpath(dir, "producer")
-    try
-        return DeepSpaceTelemetry.Supervisor.run_mission(
-            cfg;
-            run_id = run_id,
-            orig_stdout = devnull,
-        )
-    finally
-        TelemetryCore.DATA_ROOT[] = previous
-    end
+    return DeepSpaceTelemetry.Supervisor.run_mission(
+        cfg;
+        run_id = run_id,
+        orig_stdout = devnull,
+        data_root = joinpath(dir, "producer"),
+    )
 end
 
 @testset "DeepSpaceTelemetry runs" begin
@@ -105,13 +99,15 @@ end
         @test VersionNumber(geometry.package_version) >= v"2.6.0"
         @test run_state(run) == :complete && record_final(run)
         descriptor = run_descriptor(run)
-        @test descriptor["schema"] == "deepspacetelemetry-run/1"
+        @test descriptor["schema"] == "deepspacetelemetry-run/2"
         @test descriptor["mode"] == "tick" && descriptor["run_id"] == "coupling"
         # The identity of the producer's code (2.6.1 and later), recorded also
         # for a copy installed by commit, as this environment pins it
         @test occursin(r"^[0-9a-f]{40}$", descriptor["git_commit"])
         @test occursin(r"^[0-9a-f]{40}$", descriptor["git_tree_sha1"])
-        @test descriptor["git_dirty"] == false
+        # The producer's claim, passed through; 3.1.0 stamps an installed copy
+        # dirty, since its directory hash leaves out the tracked data/ root
+        @test descriptor["git_dirty"] isa Bool
         batches = list_batches(run)
         @test !isempty(batches) && issorted([b.index for b in batches])
         delivered = filter(b -> b.state == :ground, batches)
@@ -243,20 +239,18 @@ end
         @test "scheduled" in gaps_table(gap_state).cause
         @test any(g -> g.cause == :scheduled, scorer.gaps)
 
-        # Run directories derived from the snapshot of the mission: producer
-        # versions before 2.1.0 misplace an external payload after a scheduled
-        # gap or an emitter restart, payload row 1 must lie at the mission
-        # epoch, and a stamped payload row must agree with the content epoch
+        # Run directories derived from the snapshot of the mission: the
+        # adapter's floor (2.6.0) binds whatever producer_compat asks below
+        # it, payload row 1 must lie at the mission epoch, several payload
+        # columns are served only by name, and a stamped payload row must
+        # agree with the content epoch
         template = TOML.parsefile(joinpath(run_dir, "config_snapshot.toml"))
         function derived_run(
             name;
-            version = "2.0.1",
-            source = "external",
+            version = "2.6.2",
             origin = :keep,
             downtime = 0.0,
             columns = nothing,
-            tx = String[],
-            components = String[],
             sentinels = ("RUN_COMPLETE",),
         )
             d = joinpath(dir, "derived", name)
@@ -264,7 +258,6 @@ end
             foreach(s -> touch(joinpath(d, s)), sentinels)
             cfg = deepcopy(template)
             cfg["provenance"]["platform"]["package_version"] = version
-            cfg["physics"]["data_source"] = source
             cfg["simulation"]["initial_downtime_days"] = downtime
             origin === :keep || (
                 origin === nothing ? delete!(cfg["provenance"], "payload_origin") :
@@ -272,61 +265,38 @@ end
             )
             columns === nothing || (cfg["provenance"]["external_data_columns"] = columns)
             open(io -> TOML.print(io, cfg), joinpath(d, "config_snapshot.toml"), "w")
-            isempty(tx) || write(
-                joinpath(d, "events_tx.csv"),
-                join(["SimTime,Batch,Event"; tx], "\n") * "\n",
-            )
-            isempty(components) || write(
-                joinpath(d, "component_events.csv"),
-                join(["SimTime,Component,Event"; components], "\n") * "\n",
-            )
             return d
         end
-        gap = [
-            "2035-01-01T08:00:00.0,SCHEDULED,gap_start",
-            "2035-01-01T09:00:00.0,SCHEDULED,gap_end",
-        ]
-        restart = ["2035-01-01T10:00:00.0,emitter,restart"]
-        @test_throws ArgumentError open_telemetry_run(derived_run("a"; tx = gap))
+        @test_throws ArgumentError open_telemetry_run(derived_run("a"; version = "2.5.0"))
         @test_throws ArgumentError open_telemetry_run(
-            derived_run("b"; components = restart),
+            derived_run("b"; version = "2.5.0");
+            producer_compat = "1.0",
         )
-        @test open_telemetry_run(derived_run("c"; version = "2.1.1", tx = gap)) isa
+        @test open_telemetry_run(derived_run("c"); producer_compat = "1.0") isa
               AbstractTelemetryRun
-        @test open_telemetry_run(derived_run("d"; source = "synthetic", tx = gap)) isa
-              AbstractTelemetryRun
-        @test open_telemetry_run(
-            derived_run("e"; tx = ["2035-01-01T08:00:00.0,RECORDER,gap_start"]),
-        ) isa AbstractTelemetryRun
         @test_throws ArgumentError open_telemetry_run(
-            derived_run("f"; version = "2.1.1", origin = "2034-12-31T12:00:00"),
+            derived_run("d"; origin = "2034-12-31T12:00:00"),
         )
         @test_throws ArgumentError open_telemetry_run(
-            derived_run("g"; origin = nothing, downtime = 0.5),
+            derived_run("e"; origin = nothing, downtime = 0.5),
         )
         # Several payload columns are served only by name
         @test_throws ArgumentError open_telemetry_run(
-            derived_run("h"; version = "2.6.0", columns = ["A", "E"]),
+            derived_run("f"; columns = ["A", "E"]),
         )
         @test open_telemetry_run(
-            derived_run("i"; version = "2.6.0", columns = ["A", "E"]);
+            derived_run("g"; columns = ["A", "E"]);
             columns = ["A", "E"],
         ) isa AbstractTelemetryRun
         # While the producer post-processes, the record is final
         post = open_telemetry_run(
-            derived_run(
-                "j";
-                version = "2.6.0",
-                sentinels = ("RUN_ACTIVE", "RUN_POSTPROCESSING"),
-            ),
+            derived_run("h"; sentinels = ("RUN_ACTIVE", "RUN_POSTPROCESSING")),
         )
         @test run_state(post) == :active && record_final(post)
         @test !record_final(
-            open_telemetry_run(
-                derived_run("k"; version = "2.6.0", sentinels = ("RUN_ACTIVE",)),
-            ),
+            open_telemetry_run(derived_run("i"; sentinels = ("RUN_ACTIVE",))),
         )
-        stamped = derived_run("l"; version = "2.1.1")
+        stamped = derived_run("j")
         batch = joinpath(stamped, "ground", "LIVE_batch_7")
         mkpath(batch)
         write(

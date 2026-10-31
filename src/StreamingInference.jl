@@ -1,13 +1,12 @@
 """
     StreamingInference
 
-Domain-general layer of the pipeline: configuration and provenance,
-signal processing of sampled records, spectral features, the estimator
-interface between the conditioning chain and the method applied to each
-window, evaluation and decision thresholds, and the streamed consumption
-of a delivered record (run interface, coverage, window scheduling, causal
-whitening, replay, alert tables). Nothing in it depends on a physical
-domain or on a particular estimator.
+Configuration and provenance, signal processing of sampled records,
+spectral features, an estimator interface between the conditioning chain
+and the method applied to each window, evaluation and decision
+thresholds, and the streamed consumption of a delivered record (run
+interface, coverage, window scheduling, causal whitening, replay, alert
+tables). None of it depends on a particular estimator.
 """
 module StreamingInference
 
@@ -19,7 +18,8 @@ using DrWatson: DrWatson
 using FFTW: irfft, rfft, rfftfreq
 using InteractiveUtils: InteractiveUtils
 using LinearAlgebra: LinearAlgebra
-using Logging: NullLogger, with_logger
+using Logging: NullLogger, global_logger, with_logger
+using LoggingExtras: FileLogger, TeeLogger
 using Random: Random, AbstractRNG
 using Base.ScopedValues: ScopedValue, with
 using SHA: sha256
@@ -64,12 +64,16 @@ export content_digest, parameter_digest, product_table, recorded_channels
 export scored_at
 export with_pipeline_root, config_root
 export finite_stretches, window_indices
+export sidecar_path, gapped_product, run_channels, load_threshold, block_rows
+export metrics_dict, fixed, print_block_summary, block_metrics
+export config_argument, with_file_log
 
 public LEGEND_STYLE, decimation, decade_label, log_ticks, dense_log_ticks
 public ANIMATION_PX_PER_UNIT, check_frame_scale, check_gif_path, frame_schedule
 public top_legend!, label_bands!, FIGURE_FONTSIZE, TICK_FONTSIZE, ANNOTATION_FONTSIZE
 public check_band_edges, edge_margin_windows, window_count, score_limits
-public TIMESTAMP_FORMAT
+public TIMESTAMP_FORMAT, credited_span_label, credited_span_times
+public hours_between, days_since
 
 include("config.jl")
 include("provenance.jl")

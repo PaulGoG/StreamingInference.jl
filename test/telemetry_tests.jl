@@ -213,17 +213,44 @@ struct UnimplementedScorer <: AbstractWindowScorer end
     windows = replay_run(run, detector)
     @test nrow(windows) == div(n_rows - 1000, 100) + 1
     @test windows.window == 1:nrow(windows)
+    # An arrival naming a batch the run does not list is skipped and
+    # reported once per name
+    stray = vcat(
+        events,
+        [
+            ArrivalEvent(epoch + Dates.Day(30), "LIVE_batch_999", :ingested, 0),
+            ArrivalEvent(epoch + Dates.Day(31), "LIVE_batch_999", :lost, 0),
+            ArrivalEvent(epoch + Dates.Day(32), "LIVE_batch_998", :retry, 1),
+        ],
+    )
+    strayed = @test_logs (:warn, r"does not list") replay_run(
+        MemoryTelemetryRun(geometry, payload, stray),
+        detector,
+    )
+    @test strayed.window == windows.window && strayed.score == windows.score
+    @test !ismutabletype(WindowScheduler)
 
     # The conditioning belongs to the detector, the method to the scorer
     @test score_label(RMSScorer()) == "Score" &&
           estimator_memory(RMSScorer()) == Stateless()
-    @test_throws ArgumentError FeatureMap(feature_set = :unknown)
-    @test_throws ArgumentError FeatureMap(feature_set = :bands, band_edges = [1e-3])
+    @test_throws ArgumentError FeatureMap(;
+        BANDS...,
+        band_edges = BAND_EDGES,
+        feature_set = :unknown,
+    )
+    @test_throws ArgumentError FeatureMap(;
+        BANDS...,
+        feature_set = :bands,
+        band_edges = [1e-3],
+    )
     stretch = payload[1:5000]
     conditioned = condition_window(detector, stretch, 2001)
     @test length(conditioned) == 1000
-    @test extract_features(FeatureMap(), conditioned, fs) ==
-          extract_features(conditioned, fs)
+    @test extract_features(
+        FeatureMap(; BANDS..., band_edges = BAND_EDGES),
+        conditioned,
+        fs,
+    ) == extract_features(conditioned, fs; BANDS...)
     @test score_window(detector, stretch, 2001) ==
           Float32(sqrt(sum(abs2, conditioned) / length(conditioned)))
     @test all(windows.coverage .== 1.0)
@@ -826,11 +853,15 @@ end
     window = condition_window(detector(ColumnRMS(1), psds), payload[1:5000, :], 2001)
     @test size(window) == (1000, 2)
     for combination in (:mean, :max)
-        map = FeatureMap(; combination = combination)
+        map = FeatureMap(; BANDS..., band_edges = BAND_EDGES, combination = combination)
         @test extract_features(map, window, fs) ==
-              extract_features(window, fs; combination = combination)
+              extract_features(window, fs; BANDS..., combination = combination)
     end
-    @test_throws ArgumentError FeatureMap(; combination = :sum)
+    @test_throws ArgumentError FeatureMap(;
+        BANDS...,
+        band_edges = BAND_EDGES,
+        combination = :sum,
+    )
 
     # The delivery of a single-channel run applied to the two-channel record
     schedule = single(1)
