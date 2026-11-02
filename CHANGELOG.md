@@ -6,6 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- The test environment pins DeepSpaceTelemetry 3.1.1, whose installed copies
+  are stamped clean again (3.1.0 left the tracked `data/` root out of its
+  identity hash); the suite asserts `git_dirty == false` once more.
+
 ## [0.2.0] — 2026-10-31
 
 ### Changed

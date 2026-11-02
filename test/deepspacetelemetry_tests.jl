@@ -105,9 +105,7 @@ end
         # for a copy installed by commit, as this environment pins it
         @test occursin(r"^[0-9a-f]{40}$", descriptor["git_commit"])
         @test occursin(r"^[0-9a-f]{40}$", descriptor["git_tree_sha1"])
-        # The producer's claim, passed through; 3.1.0 stamps an installed copy
-        # dirty, since its directory hash leaves out the tracked data/ root
-        @test descriptor["git_dirty"] isa Bool
+        @test descriptor["git_dirty"] == false
         batches = list_batches(run)
         @test !isempty(batches) && issorted([b.index for b in batches])
         delivered = filter(b -> b.state == :ground, batches)
