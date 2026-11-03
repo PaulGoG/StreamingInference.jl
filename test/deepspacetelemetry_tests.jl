@@ -20,6 +20,7 @@ function tick_mission(
     days = 1.0,
     columns = nothing,
     disruption = nothing,
+    packet_loss = Dict{String,Any}("enabled" => false),
 )
     physics = Dict{String,Any}(
         "data_source" => "external",
@@ -46,7 +47,7 @@ function tick_mission(
             "max_batches_per_hour" => 200.0,
         ),
         "physics" => physics,
-        "packet_loss" => Dict{String,Any}("enabled" => false),
+        "packet_loss" => packet_loss,
         "dashboard" => Dict{String,Any}(
             "open_live_viewer" => false,
             "open_receiver_log" => false,
@@ -112,6 +113,28 @@ end
         first_batch = delivered[1]
         @test read_batch(run, first_batch.name) == Float32.(payload[first_batch.rows])
         @test batch_records(run, [first_batch.name, "LIVE_batch_999999"]) == [first_batch]
+
+        # A link that drops batches: a lost batch resolves as lost, under the
+        # record rule of `list_batches`, and only delivered data is read
+        lossy_dir = tick_mission(
+            dir,
+            "lossy",
+            payload_path;
+            epoch = epoch,
+            packet_loss = Dict{String,Any}(
+                "enabled" => true,
+                "model" => "bernoulli",
+                "p_loss" => 0.05,
+                "on_loss" => "drop",
+                "max_retries" => 0,
+            ),
+        )
+        lossy = open_telemetry_run(lossy_dir; producer_compat = "2.6")
+        lost = filter(b -> b.state == :lost, list_batches(lossy))
+        @test !isempty(lost)
+        @test batch_records(lossy, [b.name for b in lost]) == lost
+        @test_throws ArgumentError read_batch(lossy, first(lost).name)
+        @test isempty(batch_records(lossy, ["LIVE_batch_999999"]))
         events = arrival_events(run)
         @test !isempty(events) && issorted([e.sim_time for e in events])
         @test count(e -> e.event == :ingested, events) == length(delivered)

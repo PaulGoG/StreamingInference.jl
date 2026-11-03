@@ -71,7 +71,7 @@ The figures need `CairoMakie` in the same environment.
 [DeepSpaceTelemetry.jl](https://github.com/PaulGoG/DeepSpaceTelemetry.jl)
 simulates the telemetry downlink of a spacecraft (ground-station passes,
 packet loss and retransmission, an on-board recorder); its runs open with
-`open_telemetry_run` once its reader package, DeepSpaceTelemetryReader 3.1,
+`open_telemetry_run` once its reader package, DeepSpaceTelemetryReader 3.2,
 is loaded beside this package, alone or through DeepSpaceTelemetry. Neither
 is registered:
 `Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl", subdir = "reader")`

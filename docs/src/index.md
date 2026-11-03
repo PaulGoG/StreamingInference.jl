@@ -42,7 +42,7 @@ Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")               
 
 The figures need `CairoMakie` in the same environment; the runs of the
 telemetry simulator DeepSpaceTelemetry.jl, unregistered as well, open once
-its reader package DeepSpaceTelemetryReader 3.1 is loaded too, alone or
+its reader package DeepSpaceTelemetryReader 3.2 is loaded too, alone or
 through DeepSpaceTelemetry ([DeepSpaceTelemetry runs](@ref)).
 
 ## Layout of the package

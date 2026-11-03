@@ -3,11 +3,11 @@
 # run adapter (RunAdapter of DeepSpaceTelemetryReader, the reader package of
 # DeepSpaceTelemetry), which is versioned with the run-directory contract,
 # so that a change of the contract changes its version. The consumer only
-# reads.
+# reads, and only through the adapter: no path into the run directory is
+# built here.
 module StreamingInferenceDeepSpaceTelemetryReaderExt
 
 using DeepSpaceTelemetryReader: RunAdapter
-using TOML: TOML
 using StreamingInference:
     AbstractTelemetryRun,
     RunGeometry,
@@ -174,37 +174,27 @@ function list_batches(run::DeepSpaceTelemetryRun)
 end
 
 # A live consumer resolves the batches its fresh arrivals name, one metadata
-# read each.
+# read each, under the record rule of `list_batches`; a batch in neither
+# `ground/` nor `lost/` yet is left for a later poll.
 function batch_records(run::DeepSpaceTelemetryRun, names)
     records = BatchRecord[]
     for name in unique(String.(collect(names)))
-        parsed = try
+        try
             parse_batch_name(name)
         catch e
             e isa ArgumentError || rethrow()
             continue      # not a batch of the producer
         end
-        k, live = parsed
-        ground = joinpath(run.handle.run_dir, "ground", name)
-        lost = joinpath(run.handle.run_dir, "lost", name)
-        stage, state =
-            isdir(ground) ?
-            ("ground", isfile(joinpath(ground, "PRUNED")) ? :pruned : :ground) :
-            isdir(lost) ? ("lost", :lost) : (nothing, :lost)
-        stage === nothing && continue
-        rows = RunAdapter.batch_rows(run.handle, stage, name)
-        push!(
-            records,
-            BatchRecord(name, k, live, rows, row_time(run.geometry, first(rows)), state),
-        )
+        r = RunAdapter.batch_record(run.handle, name)
+        r === nothing || push!(records, consumer_record(run, r))
     end
     return records
 end
 
+# Only what the link delivered is read: a lost, pruned or absent batch is an
+# `ArgumentError` of the adapter.
 function read_batch(run::DeepSpaceTelemetryRun, name::AbstractString)
-    isdir(joinpath(run.handle.run_dir, "ground", name)) ||
-        throw(ArgumentError("batch $name is not on the ground of $(run.handle.run_dir)."))
-    data = RunAdapter.read_batch_matrix(run.handle, String(name))
+    data = RunAdapter.read_batch_matrix(run.handle, String(name); delivered = true)
     return run.as_matrix ? data[:, run.columns] : data[:, only(run.columns)]
 end
 
@@ -230,9 +220,6 @@ function declared_holes(run::DeepSpaceTelemetryRun; after::Integer = 0)
     ]
 end
 
-function run_descriptor(run::DeepSpaceTelemetryRun)
-    path = joinpath(run.handle.run_dir, "descriptor.toml")
-    return isfile(path) ? TOML.parsefile(path) : Dict{String,Any}()
-end
+run_descriptor(run::DeepSpaceTelemetryRun) = RunAdapter.run_descriptor(run.handle)
 
 end # module

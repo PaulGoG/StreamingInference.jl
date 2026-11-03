@@ -72,7 +72,7 @@ reader package, DeepSpaceTelemetryReader, holds the configuration reader
 and the reference run adapter without the figure stack and the HDF5 export;
 a consumer that only reads runs adds that one alone,
 `Pkg.add(url = "https://github.com/PaulGoG/DeepSpaceTelemetry.jl", subdir = "reader")`.
-With DeepSpaceTelemetryReader 3.1 loaded, directly or through
+With DeepSpaceTelemetryReader 3.2 loaded, directly or through
 DeepSpaceTelemetry, [`open_telemetry_run`](@ref) opens one of its run
 directories read-only through the run adapter, which is versioned with the
 run-directory contract.
@@ -100,7 +100,7 @@ channels of a matrix.
 
 The holes of a run are those of the producer's declared-hole feed, each
 known from the instant it was declared; the run descriptor is its
-`descriptor.toml`.
+`descriptor.toml`, read through `RunAdapter.run_descriptor`.
 
 ## Scheduling and conditioning
 

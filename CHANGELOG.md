@@ -7,10 +7,17 @@ follow [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Changed
-- The test environment pins DeepSpaceTelemetry 3.1.2 (3.1.1 stamps installed
+- The producer extension reads a DeepSpaceTelemetry run through the reader's
+  adapter alone and loads with DeepSpaceTelemetryReader 3.2: `batch_records`
+  resolves each named batch with `RunAdapter.batch_record`, under the record
+  rule of `list_batches` (the content epoch the batch carries is checked
+  against its payload rows); `read_batch` reads with `delivered = true`, so
+  a lost, pruned or absent batch is an `ArgumentError` of the adapter; and
+  `run_descriptor` is `RunAdapter.run_descriptor`, which checks the schema of
+  `descriptor.toml`. No path into the run directory is built.
+- The test environment pins DeepSpaceTelemetry 3.2.0 (3.1.1 stamps installed
   copies clean again, 3.1.0 having left the tracked `data/` root out of its
-  identity hash; 3.1.2 changes documentation only); the suite asserts
-  `git_dirty == false` once more.
+  identity hash); the suite asserts `git_dirty == false` once more.
 
 ## [0.2.0] — 2026-10-31
 
