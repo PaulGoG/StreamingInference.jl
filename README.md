@@ -63,7 +63,7 @@ environment adds it from this repository, at the release tag or following
 
 ```julia
 using Pkg
-Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.2.0")  # the release
+Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl", rev = "v0.2.1")  # the release
 Pkg.add(url = "https://github.com/PaulGoG/StreamingInference.jl")                  # main
 ```
 
@@ -130,8 +130,8 @@ and the alert tables.
 
 ## Status
 
-The current release is 0.2.0 (tag `v0.2.0`, 31 October 2026), which
-MilliHertzBase.jl 0.2.0 and MilliHertzQML.jl 3.1.0 pin by commit;
+The current release is 0.2.1 (tag `v0.2.1`, 4 November 2026), which
+MilliHertzBase.jl 0.2.1 and MilliHertzQML.jl 3.1.2 pin by commit;
 install by URL at the tag, or follow `main`. Known limitations, to be
 generalised:
 
@@ -210,7 +210,7 @@ StreamingInference.jl/
 @software{Gogita_StreamingInference_jl,
   author  = {Gogîță, Paul-Adrian},
   title   = {{StreamingInference.jl}},
-  version = {0.2.0},
+  version = {0.2.1},
   url     = {https://github.com/PaulGoG/StreamingInference.jl},
   year    = {2026}
 }
