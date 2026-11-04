@@ -494,7 +494,10 @@ labels already placed, else `:none` (the caller then widens the axis or draws it
 right). The boxes are estimated from the character count at
 the annotation size over the lower axis of the two-panel layout
 (about 780 × 370 pt); the offsets are those of the drawn labels (9 pt
-horizontally, 6 pt vertically).
+horizontally, 6 pt vertically). A point may stand for a group of markers:
+`half_widths` and `half_heights` (axis fractions, default zero) widen its
+marker box by the group's half-extent, and its label is then offset from
+the group's outermost marker on that side.
 """
 function alert_label_placement(
     x::AbstractVector{<:Real},
@@ -502,17 +505,26 @@ function alert_label_placement(
     labels::AbstractVector{<:AbstractString};
     obstacles_x::AbstractVector{<:Real} = Float64[],
     obstacles_y::AbstractVector{<:Real} = Float64[],
+    half_widths::AbstractVector{<:Real} = zeros(length(x)),
+    half_heights::AbstractVector{<:Real} = zeros(length(x)),
 )
-    length(x) == length(y) == length(labels) ||
-        throw(DimensionMismatch("x, y and labels must have equal lengths."))
+    allequal(length.((x, y, labels, half_widths, half_heights))) || throw(
+        DimensionMismatch(
+            "x, y, labels, half_widths and half_heights must have equal lengths.",
+        ),
+    )
     length(obstacles_x) == length(obstacles_y) ||
         throw(DimensionMismatch("obstacles_x and obstacles_y must have equal lengths."))
     W, H = 780.0, 370.0
     dx, dy = 9 / W, 6 / H
     h = (ANNOTATION_FONTSIZE + 2) / H
     mx, my = 12 / W, 12 / H                     # marker half-extent with its stroke
+    ex, ey = half_widths, half_heights
     overlaps(a, b) = a[1] < b[2] && b[1] < a[2] && a[3] < b[4] && b[3] < a[4]
-    markers = [(x[j] - mx, x[j] + mx, y[j] - my, y[j] + my) for j in eachindex(x)]
+    markers = [
+        (x[j] - ex[j] - mx, x[j] + ex[j] + mx, y[j] - ey[j] - my, y[j] + ey[j] + my) for
+        j in eachindex(x)
+    ]
     others =
         [(ox - mx, ox + mx, oy - my, oy + my) for (ox, oy) in zip(obstacles_x, obstacles_y)]
     placed = Tuple{Float64,Float64,Float64,Float64}[]
@@ -522,8 +534,8 @@ function alert_label_placement(
         for p in (:above_right, :above_left, :below_right, :below_left)
             right = p in (:above_right, :below_right)
             above = p in (:above_right, :above_left)
-            x0 = right ? x[i] + dx : x[i] - dx - w
-            y0 = above ? y[i] + dy : y[i] - dy - h
+            x0 = right ? x[i] + ex[i] + dx : x[i] - ex[i] - dx - w
+            y0 = above ? y[i] + ey[i] + dy : y[i] - ey[i] - dy - h
             box = (x0, x0 + w, y0, y0 + h)
             inside = 0 <= box[1] && box[2] <= 1 && 0 <= box[3] && box[4] <= 1
             clear =
@@ -537,11 +549,73 @@ function alert_label_placement(
         end
         p = placement[i] == :none ? :above_right : placement[i]
         w = 0.55 * ANNOTATION_FONTSIZE * length(labels[i]) / W
-        x0 = p in (:above_right, :below_right) ? x[i] + dx : x[i] - dx - w
-        y0 = p in (:above_right, :above_left) ? y[i] + dy : y[i] - dy - h
+        x0 = p in (:above_right, :below_right) ? x[i] + ex[i] + dx : x[i] - ex[i] - dx - w
+        y0 = p in (:above_right, :above_left) ? y[i] + ey[i] + dy : y[i] - ey[i] - dy - h
         push!(placed, (x0, x0 + w, y0, y0 + h))
     end
     return placement
+end
+
+"""
+    alert_label_layout(x, y, labels; obstacles_x = [], obstacles_y = [], merge = true) -> (groups, texts, placement)
+
+Labels of the alert markers at axis-fraction coordinates `x`, `y`: as
+[`alert_label_placement`](@ref), except that markers drawn over one
+another, of which at least one finds no clear position, share one label.
+Such markers are grouped transitively (marker boxes of about 12 pt
+half-extent that overlap); a group's text joins its members' labels in
+order of `x`, separated by commas, and is placed off the group's outermost
+marker. Returns the groups (indices into `x`, each in order of `x`), their
+texts, and the position of each group's text; `merge = false` returns the
+markers as groups of one with the placement of `alert_label_placement`.
+"""
+function alert_label_layout(
+    x::AbstractVector{<:Real},
+    y::AbstractVector{<:Real},
+    labels::AbstractVector{<:AbstractString};
+    obstacles_x::AbstractVector{<:Real} = Float64[],
+    obstacles_y::AbstractVector{<:Real} = Float64[],
+    merge::Bool = true,
+)
+    first_pass = alert_label_placement(x, y, labels; obstacles_x, obstacles_y)
+    merge || return [[i] for i in eachindex(x)], collect(String, labels), first_pass
+    n = length(x)
+    parent = collect(1:n)
+    function root(i)
+        while parent[i] != i
+            i = parent[i]
+        end
+        return i
+    end
+    mx, my = 2 * 12 / 780.0, 2 * 12 / 370.0     # centres closer than two half-extents
+    for i in 1:n, j in (i+1):n
+        (first_pass[i] == :none || first_pass[j] == :none) || continue
+        if abs(x[i] - x[j]) < mx && abs(y[i] - y[j]) < my
+            parent[root(i)] = root(j)
+        end
+    end
+    order = sortperm(collect(x))
+    groups = Vector{Int}[]
+    seen = Dict{Int,Int}()
+    for i in order
+        r = root(i)
+        haskey(seen, r) || (push!(groups, Int[]); seen[r] = length(groups))
+        push!(groups[seen[r]], i)
+    end
+    texts = [join(labels[g], ", ") for g in groups]
+    all(g -> length(g) == 1, groups) && return groups, texts, first_pass[first.(groups)]
+    centre(v, g) = (minimum(v[g]) + maximum(v[g])) / 2
+    extent(v, g) = (maximum(v[g]) - minimum(v[g])) / 2
+    placement = alert_label_placement(
+        [centre(x, g) for g in groups],
+        [centre(y, g) for g in groups],
+        texts;
+        obstacles_x,
+        obstacles_y,
+        half_widths = [extent(x, g) for g in groups],
+        half_heights = [extent(y, g) for g in groups],
+    )
+    return groups, texts, placement
 end
 
 """
@@ -718,30 +792,43 @@ function figure_telemetry_alerts(
         # Each label takes the first position clear of the other markers and
         # labels; the lower limit leaves room for a label set beneath its
         # marker only when one is
-        function placement_for(bottom)
+        function placement_for(bottom, merge)
             limits = (y_lo - bottom * y_span, y_hi + 0.12 * y_span)
             xf = (alert_x .- lo) ./ x_span
             yf = (alert_y .- limits[1]) ./ (limits[2] - limits[1])
             # The confirmation markers are obstacles the labels keep clear of
             cxf = (confirmation_x .- lo) ./ x_span
             cyf = (confirmation_y .- limits[1]) ./ (limits[2] - limits[1])
-            return alert_label_placement(
+            layout = alert_label_layout(
                 xf,
                 yf,
                 alert_labels;
                 obstacles_x = cxf,
                 obstacles_y = cyf,
-            ),
-            limits
+                merge,
+            )
+            return (layout..., limits)
         end
-        placement, limits = placement_for(0.06)
-        if any(p -> !(p in (:above_right, :above_left)), placement)
-            placement, limits = placement_for(0.14)
+        # Markers drawn over one another share a label only when the wider
+        # lower limit still leaves a label without a clear position; the
+        # narrower limit is kept whenever every label then sits above
+        all_above(placement) = all(p -> p in (:above_right, :above_left), placement)
+        groups, texts, placement, limits = placement_for(0.06, false)
+        all_above(placement) ||
+            ((groups, texts, placement, limits) = placement_for(0.14, false))
+        if any(==(:none), placement)
+            for bottom in (0.06, 0.14)
+                groups, texts, placement, limits = placement_for(bottom, true)
+                all_above(placement) && break
+            end
         end
         placement = replace(placement, :none => :above_right)
-        for (x, y, label, p) in zip(alert_x, alert_y, alert_labels, placement)
+        for (g, label, p) in zip(groups, texts, placement)
             right = p in (:above_right, :below_right)
             above = p in (:above_right, :above_left)
+            # The text of a group of markers is set off its outermost marker
+            x = right ? maximum(alert_x[g]) : minimum(alert_x[g])
+            y = above ? maximum(alert_y[g]) : minimum(alert_y[g])
             position = (
                 align = (right ? :left : :right, above ? :bottom : :top),
                 offset = (right ? 9 : -9, above ? 6 : -6),

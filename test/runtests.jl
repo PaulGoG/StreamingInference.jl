@@ -1362,6 +1362,15 @@ end
         obstacles_x = [0.2],
     )
     @test_throws DimensionMismatch ext.alert_label_placement([0.1], [0.1, 0.2], ["a"])
+    # Markers drawn over one another, whose labels find no clear position,
+    # share one label set off the outermost marker; a pair that can be
+    # labelled apart is left as it was
+    groups, texts, placement =
+        ext.alert_label_layout([0.5, 0.501], [0.5, 0.505], ["−26.2 h", "−25.6 h"])
+    @test groups == [[1, 2]] && texts == ["−26.2 h, −25.6 h"]
+    @test only(placement) in (:above_right, :above_left, :below_right, :below_left)
+    @test ext.alert_label_layout([0.5, 0.56], [0.5, 0.52], ["−27.8 h", "−21.1 h"]) ==
+          ([[1], [2]], ["−27.8 h", "−21.1 h"], [:above_left, :above_right])
     @test_throws ArgumentError SI.decade_label(0, 10)
     values, ticklabels = SI.log_ticks(0.15, 3.0)
     @test values == [0.2, 0.5, 1.0, 2.0]
@@ -1478,6 +1487,25 @@ end
     )
     y_limits = ax_latency.limits[][2]
     @test y_limits[1] < -28 && y_limits[2] > 30
+    # Two events alerted by the same alarm, their mergers an hour apart: one
+    # label for the two coincident markers
+    shared_rows = DataFrame(
+        detected = [true, true],
+        t_alarm = Union{Missing,DateTime}[epoch+Hour(300), epoch+Hour(300)],
+        t_merger = [epoch + Hour(320), epoch + Hour(321)],
+    )
+    shared_figure =
+        figure_telemetry_alerts(alert_windows, 0.5; epoch = epoch, latencies = shared_rows)
+    ax_shared = only(
+        filter(
+            a -> a isa CairoMakie.Axis && a.ylabel[] == "Latency [h]",
+            shared_figure.content,
+        ),
+    )
+    shared_texts = unique(
+        first(vcat(p.text[])) for p in ax_shared.scene.plots if p isa CairoMakie.Text
+    )
+    @test shared_texts == ["−20.0 h, −21.0 h"]
     # The confirmation tier adds one hollow, unlabelled marker per confirmed
     # event and a legend entry; the labels are those of the alerts
     confirmed_rows = copy(alert_rows)

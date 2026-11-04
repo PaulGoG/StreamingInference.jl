@@ -6,6 +6,14 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- `figure_telemetry_alerts`: alert markers drawn over one another, such as
+  two events alerted by alarms a day apart on a year-long axis, printed
+  their latency labels on top of each other when neither found a clear
+  position. Such markers now share one label, their latencies in order of
+  alarm time, set off the outermost marker of the group; labels that
+  already found a position are placed as before.
+
 ## [0.2.1] — 2026-11-04
 
 ### Changed
