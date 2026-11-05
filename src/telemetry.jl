@@ -324,7 +324,7 @@ run_descriptor(::AbstractTelemetryRun) = Dict{String,Any}()
 
 Open a DeepSpaceTelemetry run directory read-only through the producer's
 reference run adapter. Implemented by the package extension that loads
-with DeepSpaceTelemetryReader 3.1, the reader package of DeepSpaceTelemetry
+with DeepSpaceTelemetryReader 3.2, the reader package of DeepSpaceTelemetry
 (carried by DeepSpaceTelemetry itself); `producer_compat` is the oldest
 producer version accepted, never below the adapter's own floor of 2.6.0,
 the first producer with the declared-hole feed and the payload-row stamps.
@@ -341,7 +341,7 @@ function open_telemetry_run end
 The names of the payload columns the DeepSpaceTelemetry run at `run_dir`
 carries, from which [`open_telemetry_run`](@ref) selects (`columns`).
 Implemented by the package extension that loads with
-DeepSpaceTelemetryReader 3.1.
+DeepSpaceTelemetryReader 3.2.
 """
 function telemetry_run_columns end
 

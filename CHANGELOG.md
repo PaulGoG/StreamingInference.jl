@@ -6,7 +6,11 @@ follow [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.2.2] — 2026-11-05
+
 ### Fixed
+- The docstrings of `open_telemetry_run` and `telemetry_run_columns` named
+  DeepSpaceTelemetryReader 3.1; the extension loads with 3.2 since 0.2.1.
 - `figure_telemetry_alerts`: alert markers drawn over one another, such as
   two events alerted by alarms a day apart on a year-long axis, printed
   their latency labels on top of each other when neither found a clear
